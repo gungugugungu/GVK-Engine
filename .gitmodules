@@ -1,3 +1,12 @@
 [submodule "include/SDL"]
 	path = include/SDL
 	url = https://github.com/libsdl-org/SDL.git
+[submodule "include/glm"]
+	path = include/glm
+	url = https://github.com/g-truc/glm
+[submodule "include/imgui"]
+	path = include/imgui
+	url = https://github.com/ocornut/imgui.git
+[submodule "include/stb"]
+	path = include/stb
+	url = https://github.com/nothings/stb.git

@@ -1,6 +1,9 @@
 #pragma once
 #include <SDL3/SDL.h>
 #include <vulkan/vulkan.h>
+#include <glm/glm.hpp>
+#include <imgui.h>
+#include "include/stb/stb_image.h"
 
 namespace gvk {
     void init();
@@ -13,14 +16,13 @@ namespace gvk {
 namespace gvk {
     inline SDL_Window* window = nullptr;
     inline VkInstance instance = VK_NULL_HANDLE;
-    inline VkApplicationInfo application_info = {};
 
     void init() {
         // --- SDL SETUP ---
         SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO);
         SDL_Rect display_bounds;
         SDL_GetDisplayBounds(SDL_GetPrimaryDisplay(), &display_bounds);
-        window = SDL_CreateWindow("GVK RENDERER", display_bounds.x, display_bounds.y, SDL_WINDOW_VULKAN | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_FULLSCREEN);
+        window = SDL_CreateWindow("GVK RENDERER", display_bounds.w, display_bounds.h, SDL_WINDOW_VULKAN | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_FULLSCREEN);
 
         // --- VULKAN SETUP ---
     }
