@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/GVK.dir/main.cpp.o -o GVK  -Wl,-rpath,/home/gungu/Documents/coding/c++/GVKEngine/cmake-build-release/include/SDL:/home/gungu/VulkanSDK/1.4.341.1/x86_64/lib include/SDL/libSDL3.so.0.5.0 /home/gungu/VulkanSDK/1.4.341.1/x86_64/lib/libvulkan.so include/vk-bootstrap/libvk-bootstrap.a libImGui.a -ldl 

@@ -1,6 +1,15 @@
 #pragma once
+#include <memory>
+#include <optional>
+#include <string>
+#include <vector>
+#include <span>
+#include <array>
+#include <functional>
+#include <deque>
 #include <SDL3/SDL.h>
 #include <vulkan/vulkan.h>
+#include "VkBootstrap.h"
 #include <glm/glm.hpp>
 #include <imgui.h>
 #include "include/stb/stb_image.h"
@@ -15,7 +24,6 @@ namespace gvk {
 
 namespace gvk {
     inline SDL_Window* window = nullptr;
-    inline VkInstance instance = VK_NULL_HANDLE;
 
     void init() {
         // --- SDL SETUP ---

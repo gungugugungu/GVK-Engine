@@ -3,5 +3,8 @@
   <component name="VcsDirectoryMappings">
     <mapping directory="" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/include/SDL" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/include/glm" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/include/imgui" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/include/stb" vcs="Git" />
   </component>
 </project>
