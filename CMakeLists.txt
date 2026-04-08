@@ -12,8 +12,8 @@ add_subdirectory(${CMAKE_SOURCE_DIR}/include/SDL)
 add_subdirectory(${CMAKE_SOURCE_DIR}/include/glm)
 
 # --- Vulkan and Vk-Bootstrap ---
-add_subdirectory(${CMAKE_SOURCE_DIR}/include/vk-bootstrap)
 find_package(Vulkan REQUIRED)
+add_subdirectory(${CMAKE_SOURCE_DIR}/include/vk-bootstrap)
 
 # --- IMGUI ---
 set(IMGUI_PATH "${CMAKE_SOURCE_DIR}/include/imgui/")
