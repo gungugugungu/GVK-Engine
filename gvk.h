@@ -127,7 +127,16 @@ namespace gvk {
         SDL_GetWindowSize(window, &w_width, &w_height);
         create_swapchain(w_width, w_height);
     }
-    void init_commands();
+    void init_commands() {
+        VkCommandPoolCreateInfo command_pool_info = {};
+        command_pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        command_pool_info.pNext = nullptr;
+        command_pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        command_pool_info.queueFamilyIndex = _graphics_queue_family;
+
+        for (int i = 0; i < FRAME_OVERLAP; i++) {
+        }
+    }
     void init_sync_structures();
 
     void init() {
