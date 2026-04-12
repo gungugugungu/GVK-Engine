@@ -40,6 +40,18 @@ namespace gvk {
     inline std::vector<VkImageView> _swapchain_image_views;
     inline VkExtent2D _swapchain_extent;
 
+    struct FrameData {
+        VkCommandPool _commandPool;
+        VkCommandBuffer _mainCommandBuffer;
+    };
+    constexpr unsigned int FRAME_OVERLAP = 2;
+
+    inline uint32_t _frame_number{0};
+    inline FrameData _frames[FRAME_OVERLAP];
+    inline FrameData& get_current_frame() { return _frames[_frame_number % FRAME_OVERLAP]; };
+    inline VkQueue _graphics_queue;
+    inline uint32_t _graphics_queue_family;
+
     void init_vulkan() {
         vkb::InstanceBuilder builder;
 
@@ -78,6 +90,9 @@ namespace gvk {
 
         _vk_device = vkb_device.device;
         _chosen_GPU = physical_device.physical_device;
+
+        _graphics_queue = vkb_device.get_queue(vkb::QueueType::graphics).value();
+        _graphics_queue_family = vkb_device.get_queue_index(vkb::QueueType::graphics).value();
     }
 
     void create_swapchain(uint32_t width, uint32_t height) {
