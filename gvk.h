@@ -9,11 +9,49 @@
 #include <deque>
 #include <SDL3/SDL.h>
 #include <vulkan/vulkan.h>
+#include <vma/vk_mem_alloc.h>
+#include <vulkan/vk_enum_string_helper.h>
 #include "VkBootstrap.h"
+#include "VkBootstrapDispatch.h"
 #include <glm/glm.hpp>
+#include "include/fmt/include/fmt/core.h"
 #include <imgui.h>
 #include "include/stb/stb_image.h"
 #include "SDL3/SDL_vulkan.h"
+
+#define VK_CHECK(x) \
+do { \
+VkResult err = x; \
+if (err) { \
+fmt::print("Detected Vulkan error: {}", string_VkResult(err)); \
+abort(); \
+} \
+} while (0)
+
+VkCommandPoolCreateInfo init_command_pool_create_info(uint32_t queueFamilyIndex,
+    VkCommandPoolCreateFlags flags /*= 0*/)
+{
+    VkCommandPoolCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    info.pNext = nullptr;
+    info.queueFamilyIndex = queueFamilyIndex;
+    info.flags = flags;
+    return info;
+}
+
+
+VkCommandBufferAllocateInfo init_command_buffer_allocate_info(
+    VkCommandPool pool, uint32_t count /*= 1*/)
+{
+    VkCommandBufferAllocateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    info.pNext = nullptr;
+
+    info.commandPool = pool;
+    info.commandBufferCount = count;
+    info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    return info;
+}
 
 namespace gvk {
     void init();
@@ -128,13 +166,14 @@ namespace gvk {
         create_swapchain(w_width, w_height);
     }
     void init_commands() {
-        VkCommandPoolCreateInfo command_pool_info = {};
-        command_pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-        command_pool_info.pNext = nullptr;
-        command_pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-        command_pool_info.queueFamilyIndex = _graphics_queue_family;
+        VkCommandPoolCreateInfo command_pool_info = init_command_pool_create_info(_graphics_queue_family, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
 
         for (int i = 0; i < FRAME_OVERLAP; i++) {
+            VK_CHECK(vkCreateCommandPool(_vk_device, &command_pool_info, nullptr, &_frames[i]._commandPool));
+
+            VkCommandBufferAllocateInfo cmd_alloc_info = init_command_buffer_allocate_info(_frames[i]._commandPool, 1);
+
+            VK_CHECK(vkAllocateCommandBuffers(_vk_device, &cmd_alloc_info, &_frames[i]._mainCommandBuffer));
         }
     }
     void init_sync_structures();
@@ -149,12 +188,17 @@ namespace gvk {
         // --- VULKAN SETUP ---
         init_vulkan();
         init_swapchain();
-        /*init_commands();
-        init_sync_structures();*/
+        init_commands();
+        //init_sync_structures();
     }
 
     void quit() {
         destroy_swapchain();
+
+        vkDeviceWaitIdle(_vk_device);
+        for (int i = 0; i < FRAME_OVERLAP; i++) {
+            vkDestroyCommandPool(_vk_device, _frames[i]._commandPool, nullptr);
+        }
 
         vkDestroySurfaceKHR(_vk_instance, _vk_surface, nullptr);
         vkDestroyDevice(_vk_device, nullptr);

@@ -13,3 +13,6 @@
 [submodule "include/vk-bootstrap"]
 	path = include/vk-bootstrap
 	url = https://github.com/charles-lunarg/vk-bootstrap.git
+[submodule "include/fmt"]
+	path = include/fmt
+	url = https://github.com/fmtlib/fmt.git

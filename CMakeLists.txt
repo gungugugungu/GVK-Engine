@@ -21,6 +21,9 @@ file(GLOB IMGUI_SOURCES ${IMGUI_PATH}/*.cpp)
 add_library(ImGui STATIC ${IMGUI_SOURCES})
 target_include_directories(ImGui PUBLIC ${IMGUI_PATH})
 
+# --- FMT ---
+add_subdirectory(${CMAKE_SOURCE_DIR}/include/fmt)
+
 # ================ Executable ================
 
 add_executable(GVK
@@ -31,6 +34,7 @@ target_link_libraries(GVK
     PRIVATE
         SDL3::SDL3
         Vulkan::Vulkan
+        fmt
         vk-bootstrap::vk-bootstrap
         ImGui
         ${CMAKE_DL_LIBS}
