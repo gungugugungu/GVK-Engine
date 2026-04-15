@@ -29,7 +29,7 @@ abort(); \
 } while (0)
 
 VkCommandPoolCreateInfo init_command_pool_create_info(uint32_t queueFamilyIndex,
-    VkCommandPoolCreateFlags flags /*= 0*/)
+    VkCommandPoolCreateFlags flags)
 {
     VkCommandPoolCreateInfo info = {};
     info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -41,7 +41,7 @@ VkCommandPoolCreateInfo init_command_pool_create_info(uint32_t queueFamilyIndex,
 
 
 VkCommandBufferAllocateInfo init_command_buffer_allocate_info(
-    VkCommandPool pool, uint32_t count /*= 1*/)
+    VkCommandPool pool, uint32_t count)
 {
     VkCommandBufferAllocateInfo info = {};
     info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
