@@ -68,6 +68,16 @@ VkCommandBufferAllocateInfo init_command_buffer_allocate_info(
     return info;
 }
 
+VkCommandBufferBeginInfo create_command_buffer_begin_info(VkCommandBufferUsageFlags flags) {
+    VkCommandBufferBeginInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    info.pNext = nullptr;
+
+    info.pInheritanceInfo = nullptr;
+    info.flags = flags;
+    return info;
+}
+
 namespace gvk {
     void init();
     void quit();
@@ -217,7 +227,7 @@ namespace gvk {
         init_vulkan();
         init_swapchain();
         init_commands();
-        //init_sync_structures();
+        init_sync_structures();
     }
 
     void draw() {
@@ -226,6 +236,11 @@ namespace gvk {
 
         uint32_t swapchain_image_index;
         VK_CHECK(vkAcquireNextImageKHR(_vk_device, _swapchain, 1000000000, get_current_frame()._swapchain_semaphore, nullptr, &swapchain_image_index));
+
+        VkCommandBuffer cmd = get_current_frame()._mainCommandBuffer;
+        VK_CHECK(vkResetCommandBuffer(cmd, 0));
+        VkCommandBufferBeginInfo cmd_begin_info = create_command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+        VK_CHECK(vkBeginCommandBuffer(cmd, &cmd_begin_info));
     }
 
     void quit() {
