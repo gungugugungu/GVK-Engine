@@ -39,6 +39,21 @@ VkCommandPoolCreateInfo init_command_pool_create_info(uint32_t queueFamilyIndex,
     return info;
 }
 
+VkFenceCreateInfo create_fence_info(VkFenceCreateFlags flags) {
+    VkFenceCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    info.pNext = nullptr;
+    info.flags = flags;
+    return info;
+}
+
+VkSemaphoreCreateInfo create_semaphore_info(VkSemaphoreCreateFlags flags) {
+    VkSemaphoreCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    info.pNext = nullptr;
+    info.flags = flags;
+    return info;
+}
 
 VkCommandBufferAllocateInfo init_command_buffer_allocate_info(
     VkCommandPool pool, uint32_t count)
@@ -81,6 +96,8 @@ namespace gvk {
     struct FrameData {
         VkCommandPool _commandPool;
         VkCommandBuffer _mainCommandBuffer;
+        VkSemaphore _swapchain_semaphore, _render_semaphore;
+        VkFence _render_fence;
     };
     constexpr unsigned int FRAME_OVERLAP = 2;
 
@@ -176,7 +193,18 @@ namespace gvk {
             VK_CHECK(vkAllocateCommandBuffers(_vk_device, &cmd_alloc_info, &_frames[i]._mainCommandBuffer));
         }
     }
-    void init_sync_structures();
+
+    void init_sync_structures() {
+        VkFenceCreateInfo fence_create_info = create_fence_info(VK_FENCE_CREATE_SIGNALED_BIT);
+        VkSemaphoreCreateInfo semaphore_create_info = create_semaphore_info(0);
+
+        for (int i = 0; i < FRAME_OVERLAP; i++) {
+            VK_CHECK(vkCreateFence(_vk_device, &fence_create_info, nullptr, &_frames[i]._render_fence));
+
+            VK_CHECK(vkCreateSemaphore(_vk_device, &semaphore_create_info, nullptr, &_frames[i]._swapchain_semaphore));
+            VK_CHECK(vkCreateSemaphore(_vk_device, &semaphore_create_info, nullptr, &_frames[i]._render_semaphore));
+        }
+    }
 
     void init() {
         // --- SDL SETUP ---
@@ -190,6 +218,14 @@ namespace gvk {
         init_swapchain();
         init_commands();
         //init_sync_structures();
+    }
+
+    void draw() {
+        VK_CHECK(vkWaitForFences(_vk_device, 1, &get_current_frame()._render_fence, true, 1000000000));
+        VK_CHECK(vkResetFences(_vk_device, 1, &get_current_frame()._render_fence));
+
+        uint32_t swapchain_image_index;
+        VK_CHECK(vkAcquireNextImageKHR(_vk_device, _swapchain, 1000000000, get_current_frame()._swapchain_semaphore, nullptr, &swapchain_image_index));
     }
 
     void quit() {
