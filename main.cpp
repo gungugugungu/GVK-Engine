@@ -16,6 +16,7 @@ int main() {
                 running = false;
             }
         }
+        gvk::draw();
     }
 
     gvk::quit();

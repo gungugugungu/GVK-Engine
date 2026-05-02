@@ -78,6 +78,84 @@ VkCommandBufferBeginInfo create_command_buffer_begin_info(VkCommandBufferUsageFl
     return info;
 }
 
+VkImageSubresourceRange image_subresource_range(VkImageAspectFlags aspect_mask) {
+    VkImageSubresourceRange sub_image = {};
+    sub_image.aspectMask = aspect_mask;
+    sub_image.baseMipLevel = 0;
+    sub_image.levelCount = VK_REMAINING_MIP_LEVELS;
+    sub_image.baseArrayLayer = 0;
+    sub_image.layerCount = VK_REMAINING_ARRAY_LAYERS;
+    return sub_image;
+}
+
+void transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout old_layout, VkImageLayout new_layout) {
+    VkImageMemoryBarrier2 image_barrier = {.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+    image_barrier.pNext = nullptr;
+
+    image_barrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    image_barrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+    image_barrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    image_barrier.dstAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT;
+
+    image_barrier.oldLayout = old_layout;
+    image_barrier.newLayout = new_layout;
+
+    VkImageAspectFlags aspect_mask = (new_layout == VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+    image_barrier.subresourceRange = image_subresource_range(aspect_mask);
+    image_barrier.image = image;
+
+    VkDependencyInfo dep_info = {};
+    dep_info.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    dep_info.pNext = nullptr;
+
+    dep_info.imageMemoryBarrierCount = 1;
+    dep_info.pImageMemoryBarriers = &image_barrier;
+
+    vkCmdPipelineBarrier2(cmd, &dep_info);
+}
+
+VkSemaphoreSubmitInfo make_semaphore_submit_info(VkPipelineStageFlags2 stage_mask, VkSemaphore semaphore)
+{
+    VkSemaphoreSubmitInfo submit_info{};
+    submit_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+    submit_info.pNext = nullptr;
+    submit_info.semaphore = semaphore;
+    submit_info.stageMask = stage_mask;
+    submit_info.deviceIndex = 0;
+    submit_info.value = 1;
+
+    return submit_info;
+};
+
+VkCommandBufferSubmitInfo make_command_buffer_submit_info(VkCommandBuffer cmd)
+{
+    VkCommandBufferSubmitInfo info{};
+    info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+    info.pNext = nullptr;
+    info.commandBuffer = cmd;
+    info.deviceMask = 0;
+
+    return info;
+}
+
+VkSubmitInfo2 submit_info(VkCommandBufferSubmitInfo* cmd, VkSemaphoreSubmitInfo* signal_semaphore_info, VkSemaphoreSubmitInfo* wait_semaphore_info)
+{
+    VkSubmitInfo2 info = {};
+    info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+    info.pNext = nullptr;
+
+    info.waitSemaphoreInfoCount = wait_semaphore_info == nullptr ? 0 : 1;
+    info.pWaitSemaphoreInfos = wait_semaphore_info;
+
+    info.signalSemaphoreInfoCount = signal_semaphore_info == nullptr ? 0 : 1;
+    info.pSignalSemaphoreInfos = signal_semaphore_info;
+
+    info.commandBufferInfoCount = 1;
+    info.pCommandBufferInfos = cmd;
+
+    return info;
+}
+
 namespace gvk {
     void init();
     void quit();
@@ -241,6 +319,50 @@ namespace gvk {
         VK_CHECK(vkResetCommandBuffer(cmd, 0));
         VkCommandBufferBeginInfo cmd_begin_info = create_command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
         VK_CHECK(vkBeginCommandBuffer(cmd, &cmd_begin_info));
+
+        // turn swapchain image writeable
+        transition_image(cmd, _swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+
+        // useless testing stuff
+        VkClearColorValue clear_color_value;
+        float flash = std::abs(std::sin(_frame_number / 120.f));
+        clear_color_value = {{0.0f, 0.0f, flash, 1.0f}};
+
+        VkImageSubresourceRange clear_range = image_subresource_range(VK_IMAGE_ASPECT_COLOR_BIT);
+
+        // clear image
+        vkCmdClearColorImage(cmd, _swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_GENERAL, &clear_color_value, 1, &clear_range);
+
+        // turn swapchain image presentable
+        transition_image(cmd, _swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+
+        // finalize command buffer
+        VK_CHECK(vkEndCommandBuffer(cmd));
+
+        // prepare submission to queue
+        VkCommandBufferSubmitInfo cmd_info = make_command_buffer_submit_info(cmd);
+        VkSemaphoreSubmitInfo wait_info = make_semaphore_submit_info(VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR,get_current_frame()._swapchain_semaphore);
+        VkSemaphoreSubmitInfo signal_info = make_semaphore_submit_info(VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT, get_current_frame()._render_semaphore);
+        VkSubmitInfo2 submit = submit_info(&cmd_info, &signal_info, &wait_info);
+
+        // submit command buffer to the queue and execute it; commands are blocked until this is over
+        VK_CHECK(vkQueueSubmit2(_graphics_queue, 1, &submit, get_current_frame()._render_fence));
+
+        // prepare presetation
+        VkPresentInfoKHR present_info = {};
+        present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+        present_info.pNext = nullptr;
+        present_info.pSwapchains = &_swapchain;
+        present_info.swapchainCount = 1;
+
+        present_info.pWaitSemaphores = &get_current_frame()._render_semaphore;
+        present_info.waitSemaphoreCount = 1;
+
+        present_info.pImageIndices = &swapchain_image_index;
+
+        VK_CHECK(vkQueuePresentKHR(_graphics_queue, &present_info));
+
+        _frame_number++;
     }
 
     void quit() {
@@ -249,6 +371,10 @@ namespace gvk {
         vkDeviceWaitIdle(_vk_device);
         for (int i = 0; i < FRAME_OVERLAP; i++) {
             vkDestroyCommandPool(_vk_device, _frames[i]._commandPool, nullptr);
+
+            vkDestroyFence(_vk_device, _frames[i]._render_fence, nullptr);
+            vkDestroySemaphore(_vk_device, _frames[i]._render_semaphore, nullptr);
+            vkDestroySemaphore(_vk_device, _frames[i]._swapchain_semaphore, nullptr);
         }
 
         vkDestroySurfaceKHR(_vk_instance, _vk_surface, nullptr);
