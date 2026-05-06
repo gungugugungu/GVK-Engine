@@ -1,4 +1,5 @@
 #pragma once
+#define VMA_IMPLEMENTATION
 #include <memory>
 #include <optional>
 #include <string>
@@ -156,6 +157,102 @@ VkSubmitInfo2 submit_info(VkCommandBufferSubmitInfo* cmd, VkSemaphoreSubmitInfo*
     return info;
 }
 
+VkImageCreateInfo image_create_info(VkFormat format, VkImageUsageFlags usage_flags, VkExtent3D extent) {
+    VkImageCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    info.pNext = nullptr;
+
+    info.imageType = VK_IMAGE_TYPE_2D;
+
+    info.format = format;
+    info.extent = extent;
+
+    info.mipLevels = 1;
+    info.arrayLayers = 1;
+
+    info.samples = VK_SAMPLE_COUNT_1_BIT; // for MSAA
+    info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    info.usage = usage_flags;
+
+    return info;
+}
+
+VkImageViewCreateInfo imageview_create_info(VkFormat format, VkImage image, VkImageAspectFlags aspectFlags) {
+    VkImageViewCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    info.pNext = nullptr;
+
+    info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    info.image = image;
+    info.format = format;
+    info.subresourceRange.baseMipLevel = 0;
+    info.subresourceRange.levelCount = 1;
+    info.subresourceRange.baseArrayLayer = 0;
+    info.subresourceRange.layerCount = 1;
+    info.subresourceRange.aspectMask = aspectFlags;
+
+    return info;
+}
+
+void copy_image_to_image(VkCommandBuffer cmd, VkImage source, VkImage destination, VkExtent2D srcSize, VkExtent2D dstSize)
+{
+    VkImageBlit2 blitRegion{ .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2, .pNext = nullptr };
+
+    blitRegion.srcOffsets[1].x = srcSize.width;
+    blitRegion.srcOffsets[1].y = srcSize.height;
+    blitRegion.srcOffsets[1].z = 1;
+
+    blitRegion.dstOffsets[1].x = dstSize.width;
+    blitRegion.dstOffsets[1].y = dstSize.height;
+    blitRegion.dstOffsets[1].z = 1;
+
+    blitRegion.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    blitRegion.srcSubresource.baseArrayLayer = 0;
+    blitRegion.srcSubresource.layerCount = 1;
+    blitRegion.srcSubresource.mipLevel = 0;
+
+    blitRegion.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    blitRegion.dstSubresource.baseArrayLayer = 0;
+    blitRegion.dstSubresource.layerCount = 1;
+    blitRegion.dstSubresource.mipLevel = 0;
+
+    VkBlitImageInfo2 blitInfo{ .sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2, .pNext = nullptr };
+    blitInfo.dstImage = destination;
+    blitInfo.dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    blitInfo.srcImage = source;
+    blitInfo.srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    blitInfo.filter = VK_FILTER_LINEAR;
+    blitInfo.regionCount = 1;
+    blitInfo.pRegions = &blitRegion;
+
+    vkCmdBlitImage2(cmd, &blitInfo);
+}
+
+struct DeletionQueue
+{
+    std::deque<std::function<void()>> deletors;
+
+    void push_function(std::function<void()>&& function) {
+        deletors.push_back(function);
+    }
+
+    void flush() {
+        for (auto it = deletors.rbegin(); it != deletors.rend(); it++) {
+            (*it)();
+        }
+
+        deletors.clear();
+    }
+};
+
+struct AllocatedImage {
+    VkImage image;
+    VkImageView image_view;
+    VmaAllocation allocation;
+    VkExtent3D extent;
+    VkFormat format;
+};
+
 namespace gvk {
     void init();
     void quit();
@@ -166,6 +263,7 @@ namespace gvk {
 
 namespace gvk {
     inline SDL_Window* window = nullptr;
+    inline DeletionQueue _main_deletion_queue;
 
     inline VkInstance _vk_instance;
     inline VkPhysicalDevice _chosen_GPU;
@@ -186,6 +284,7 @@ namespace gvk {
         VkCommandBuffer _mainCommandBuffer;
         VkSemaphore _swapchain_semaphore, _render_semaphore;
         VkFence _render_fence;
+        DeletionQueue _deletion_queue;
     };
     constexpr unsigned int FRAME_OVERLAP = 2;
 
@@ -194,6 +293,22 @@ namespace gvk {
     inline FrameData& get_current_frame() { return _frames[_frame_number % FRAME_OVERLAP]; };
     inline VkQueue _graphics_queue;
     inline uint32_t _graphics_queue_family;
+
+    inline VmaAllocator _allocator;
+
+    // draw resources
+    inline AllocatedImage _draw_image;
+    inline VkExtent2D _draw_extent;
+
+    void draw_background (VkCommandBuffer cmd) {
+        VkClearColorValue clear_color_value;
+        float flash = std::abs(std::sin(_frame_number / 120.f));
+        clear_color_value = {{0.0f, 0.0f, flash, 1.0f}};
+
+        VkImageSubresourceRange clear_range = image_subresource_range(VK_IMAGE_ASPECT_COLOR_BIT);
+
+        vkCmdClearColorImage(cmd, _draw_image.image, VK_IMAGE_LAYOUT_GENERAL, &clear_color_value, 1, &clear_range);
+    }
 
     void init_vulkan() {
         vkb::InstanceBuilder builder;
@@ -236,6 +351,15 @@ namespace gvk {
 
         _graphics_queue = vkb_device.get_queue(vkb::QueueType::graphics).value();
         _graphics_queue_family = vkb_device.get_queue_index(vkb::QueueType::graphics).value();
+
+        // memory allocation
+        VmaAllocatorCreateInfo allocator_info = {};
+        allocator_info.physicalDevice = _chosen_GPU;
+        allocator_info.device = _vk_device;
+        allocator_info.instance = _vk_instance;
+        allocator_info.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+        vmaCreateAllocator(&allocator_info, &_allocator);
+        _main_deletion_queue.push_function([&]() {vmaDestroyAllocator(_allocator);});
     }
 
     void create_swapchain(uint32_t width, uint32_t height) {
@@ -269,7 +393,35 @@ namespace gvk {
         int w_width, w_height;
         SDL_GetWindowSize(window, &w_width, &w_height);
         create_swapchain(w_width, w_height);
+
+        VkExtent3D draw_image_extent = {};
+        draw_image_extent.width = static_cast<uint32_t>(w_width);
+        draw_image_extent.height = static_cast<uint32_t>(w_height);
+        draw_image_extent.depth = 1;
+
+        _draw_image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+        _draw_image.extent = draw_image_extent;
+
+        VkImageUsageFlags draw_image_usages{};
+        draw_image_usages |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        draw_image_usages |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        draw_image_usages |= VK_IMAGE_USAGE_STORAGE_BIT;
+        draw_image_usages |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+        VkImageCreateInfo rimg_info = image_create_info(_draw_image.format, draw_image_usages, draw_image_extent);
+
+        VmaAllocationCreateInfo rimg_allocinfo = {};
+        rimg_allocinfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+        rimg_allocinfo.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+        vmaCreateImage(_allocator, &rimg_info, &rimg_allocinfo, &_draw_image.image, &_draw_image.allocation, nullptr);
+        VkImageViewCreateInfo rview_info = imageview_create_info(_draw_image.format, _draw_image.image, VK_IMAGE_ASPECT_COLOR_BIT);
+
+        VK_CHECK(vkCreateImageView(_vk_device, &rview_info, nullptr, &_draw_image.image_view));
+
+        _main_deletion_queue.push_function([=]() { vkDestroyImageView(_vk_device, _draw_image.image_view, nullptr); vmaDestroyImage(_allocator, _draw_image.image, _draw_image.allocation); });
     }
+
     void init_commands() {
         VkCommandPoolCreateInfo command_pool_info = init_command_pool_create_info(_graphics_queue_family, VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT);
 
@@ -310,31 +462,32 @@ namespace gvk {
 
     void draw() {
         VK_CHECK(vkWaitForFences(_vk_device, 1, &get_current_frame()._render_fence, true, 1000000000));
+        get_current_frame()._deletion_queue.flush();
         VK_CHECK(vkResetFences(_vk_device, 1, &get_current_frame()._render_fence));
 
         uint32_t swapchain_image_index;
         VK_CHECK(vkAcquireNextImageKHR(_vk_device, _swapchain, 1000000000, get_current_frame()._swapchain_semaphore, nullptr, &swapchain_image_index));
-
         VkCommandBuffer cmd = get_current_frame()._mainCommandBuffer;
         VK_CHECK(vkResetCommandBuffer(cmd, 0));
+
+        _draw_extent.width = _draw_image.extent.width;
+        _draw_extent.height = _draw_image.extent.height;
+
         VkCommandBufferBeginInfo cmd_begin_info = create_command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
         VK_CHECK(vkBeginCommandBuffer(cmd, &cmd_begin_info));
 
         // turn swapchain image writeable
-        transition_image(cmd, _swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+        transition_image(cmd, _draw_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 
         // useless testing stuff
-        VkClearColorValue clear_color_value;
-        float flash = std::abs(std::sin(_frame_number / 120.f));
-        clear_color_value = {{0.0f, 0.0f, flash, 1.0f}};
-
-        VkImageSubresourceRange clear_range = image_subresource_range(VK_IMAGE_ASPECT_COLOR_BIT);
-
-        // clear image
-        vkCmdClearColorImage(cmd, _swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_GENERAL, &clear_color_value, 1, &clear_range);
+        draw_background(cmd);
 
         // turn swapchain image presentable
-        transition_image(cmd, _swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        transition_image(cmd, _draw_image.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        transition_image(cmd, _swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+        copy_image_to_image(cmd, _draw_image.image, _swapchain_images[swapchain_image_index], _draw_extent, _swapchain_extent);
+        transition_image(cmd, _swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
         // finalize command buffer
         VK_CHECK(vkEndCommandBuffer(cmd));
@@ -376,6 +529,8 @@ namespace gvk {
             vkDestroySemaphore(_vk_device, _frames[i]._render_semaphore, nullptr);
             vkDestroySemaphore(_vk_device, _frames[i]._swapchain_semaphore, nullptr);
         }
+
+        _main_deletion_queue.flush();
 
         vkDestroySurfaceKHR(_vk_instance, _vk_surface, nullptr);
         vkDestroyDevice(_vk_device, nullptr);
