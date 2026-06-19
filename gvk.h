@@ -361,6 +361,24 @@ VkDescriptorSet DescriptorAllocator::allocate(VkDevice device, VkDescriptorSetLa
     return ds;
 }
 
+VkRenderingAttachmentInfo attachment_info(
+    VkImageView view, VkClearValue* clear ,VkImageLayout layout /*= VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL*/)
+{
+    VkRenderingAttachmentInfo colorAttachment {};
+    colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    colorAttachment.pNext = nullptr;
+
+    colorAttachment.imageView = view;
+    colorAttachment.imageLayout = layout;
+    colorAttachment.loadOp = clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    if (clear) {
+        colorAttachment.clearValue = *clear;
+    }
+
+    return colorAttachment;
+}
+
 bool load_shader_module(const char* file_path, VkDevice device, VkShaderModule* out_shader_module) {
     ifstream file(file_path, ios::ate | ios::binary);
 
@@ -520,12 +538,34 @@ namespace gvk {
 
         ImGui_ImplVulkan_Init(&init_info);
 
-        ImGui_ImplVulkan_CreateFontsTexture(); // <- fix that please I'm lazy rn
+        // this should be here, but I think init replaces it now: ImGui_ImplVulkan_CreateFontsTexture();
+        // if text isn't working then just uncomment it and find an alternative I guess
 
         _main_deletion_queue.push_function([=]() {
             ImGui_ImplVulkan_Shutdown();
             vkDestroyDescriptorPool(_vk_device, imguiPool, nullptr);
         });
+    }
+
+    void draw_imgui(VkCommandBuffer cmd, VkImageView targetImageView)
+    {
+        VkRenderingAttachmentInfo colorAttachment = attachment_info(targetImageView, nullptr, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+        VkRenderingInfo renderInfo{};
+        renderInfo.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+        renderInfo.pNext = nullptr;
+        renderInfo.renderArea = VkRect2D{ VkOffset2D{ 0, 0 }, _swapchain_extent };
+        renderInfo.layerCount = 1;
+        renderInfo.colorAttachmentCount = 1;
+        renderInfo.pColorAttachments = &colorAttachment;
+        renderInfo.pDepthAttachment = nullptr;
+        renderInfo.pStencilAttachment = nullptr;
+
+        vkCmdBeginRendering(cmd, &renderInfo);
+
+        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+
+        vkCmdEndRendering(cmd);
     }
 
     void draw_background (VkCommandBuffer cmd) {
@@ -779,6 +819,7 @@ namespace gvk {
         init_sync_structures();
         init_descriptors();
         init_pipelines();
+        init_imgui();
     }
 
     void draw() {
@@ -808,7 +849,11 @@ namespace gvk {
         transition_image(cmd, _swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
         copy_image_to_image(cmd, _draw_image.image, _swapchain_images[swapchain_image_index], _draw_extent, _swapchain_extent);
-        transition_image(cmd, _swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+        transition_image(cmd, _swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+        draw_imgui(cmd, _swapchain_image_views[swapchain_image_index]);
+
+        transition_image(cmd, _swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
         // finalize command buffer
         VK_CHECK(vkEndCommandBuffer(cmd));

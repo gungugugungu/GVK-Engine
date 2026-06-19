@@ -11,11 +11,19 @@ int main() {
     bool running = true;
     while (running) {
         SDL_Event e;
-        while (SDL_PollEvent(&e)) {
+        while (SDL_PollEvent(&e) != 0) {
             if (e.type == SDL_EVENT_QUIT) {
                 running = false;
             }
+
+            ImGui_ImplSDL3_ProcessEvent(&e);
         }
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplSDL3_NewFrame();
+        ImGui::NewFrame();
+        ImGui::ShowDemoWindow();
+        ImGui::Render();
+
         gvk::draw();
     }
 

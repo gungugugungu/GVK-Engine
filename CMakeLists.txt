@@ -17,9 +17,25 @@ add_subdirectory(${CMAKE_SOURCE_DIR}/include/vk-bootstrap)
 
 # --- IMGUI ---
 set(IMGUI_PATH "${CMAKE_SOURCE_DIR}/include/imgui/")
+set(IMGUI_BACKENDS_PATH "${IMGUI_PATH}/backends")
+
 file(GLOB IMGUI_SOURCES ${IMGUI_PATH}/*.cpp)
-add_library(ImGui STATIC ${IMGUI_SOURCES})
-target_include_directories(ImGui PUBLIC ${IMGUI_PATH})
+
+add_library(ImGui STATIC
+        ${IMGUI_SOURCES}
+        ${IMGUI_BACKENDS_PATH}/imgui_impl_vulkan.cpp
+        ${IMGUI_BACKENDS_PATH}/imgui_impl_sdl3.cpp
+)
+
+target_include_directories(ImGui PUBLIC
+        ${IMGUI_PATH}
+        ${IMGUI_BACKENDS_PATH}
+)
+
+target_link_libraries(ImGui PUBLIC
+        Vulkan::Vulkan
+        SDL3::SDL3
+)
 
 # --- FMT ---
 add_subdirectory(${CMAKE_SOURCE_DIR}/include/fmt)
@@ -44,4 +60,5 @@ target_include_directories(GVK
     PRIVATE
         ${Vulkan_INCLUDE_DIRS}
         ${IMGUI_PATH}
+        ${IMGUI_BACKENDS_PATH}
 )
