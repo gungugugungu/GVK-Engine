@@ -411,6 +411,167 @@ bool load_shader_module(const char* file_path, VkDevice device, VkShaderModule* 
     return true;
 }
 
+VkPipelineShaderStageCreateInfo pipeline_shader_stage_create_info(VkShaderStageFlagBits stage, VkShaderModule shader_module) {
+    VkPipelineShaderStageCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    info.pNext = nullptr;
+    info.stage = stage;
+    info.module = shader_module;
+    info.pName = "main";
+    return info;
+}
+
+VkPipelineLayoutCreateInfo pipeline_layout_create_info() {
+    VkPipelineLayoutCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    info.pNext = nullptr;
+    info.flags = 0;
+    info.setLayoutCount = 0;
+    info.pSetLayouts = nullptr;
+    info.pushConstantRangeCount = 0;
+    info.pPushConstantRanges = nullptr;
+    return info;
+}
+
+VkRenderingInfo rendering_info(VkExtent2D render_extent, VkRenderingAttachmentInfo* color_attachment, VkRenderingAttachmentInfo* depth_attachment) {
+    VkRenderingInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+    info.pNext = nullptr;
+    info.renderArea = VkRect2D{VkOffset2D{0, 0}, render_extent};
+    info.layerCount = 1;
+    info.colorAttachmentCount = 1;
+    info.pColorAttachments = color_attachment;
+    info.pDepthAttachment = depth_attachment;
+    info.pStencilAttachment = nullptr;
+    return info;
+}
+
+struct PipelineBuilder {
+    std::vector<VkPipelineShaderStageCreateInfo> _shader_stages;
+    VkPipelineInputAssemblyStateCreateInfo _input_assembly;
+    VkPipelineRasterizationStateCreateInfo _rasterizer;
+    VkPipelineColorBlendAttachmentState _color_blend_attachment;
+    VkPipelineMultisampleStateCreateInfo _multisampling;
+    VkPipelineLayout _pipeline_layout;
+    VkPipelineDepthStencilStateCreateInfo _depth_stencil;
+    VkPipelineRenderingCreateInfo _render_info;
+    VkFormat _color_attachment_format;
+
+    PipelineBuilder() { clear(); }
+
+    void clear() {
+        _input_assembly   = {.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+        _rasterizer       = {.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+        _color_blend_attachment = {};
+        _multisampling    = {.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+        _pipeline_layout  = {};
+        _depth_stencil    = {.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+        _render_info      = {.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+        _shader_stages.clear();
+    }
+
+    VkPipeline build_pipeline(VkDevice device) {
+        VkPipelineViewportStateCreateInfo viewport_state = {};
+        viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+        viewport_state.viewportCount = 1;
+        viewport_state.scissorCount = 1;
+
+        VkPipelineColorBlendStateCreateInfo color_blending = {};
+        color_blending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+        color_blending.logicOpEnable = VK_FALSE;
+        color_blending.logicOp = VK_LOGIC_OP_COPY;
+        color_blending.attachmentCount = 1;
+        color_blending.pAttachments = &_color_blend_attachment;
+
+        VkPipelineVertexInputStateCreateInfo vertex_input_info = {.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+
+        VkGraphicsPipelineCreateInfo pipeline_info = {.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+        pipeline_info.pNext = &_render_info;
+        pipeline_info.stageCount = (uint32_t)_shader_stages.size();
+        pipeline_info.pStages = _shader_stages.data();
+        pipeline_info.pVertexInputState = &vertex_input_info;
+        pipeline_info.pInputAssemblyState = &_input_assembly;
+        pipeline_info.pViewportState = &viewport_state;
+        pipeline_info.pRasterizationState = &_rasterizer;
+        pipeline_info.pMultisampleState = &_multisampling;
+        pipeline_info.pColorBlendState = &color_blending;
+        pipeline_info.pDepthStencilState = &_depth_stencil;
+        pipeline_info.layout = _pipeline_layout;
+
+        VkDynamicState dyn_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+        VkPipelineDynamicStateCreateInfo dynamic_info = {.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+        dynamic_info.pDynamicStates = &dyn_states[0];
+        dynamic_info.dynamicStateCount = 2;
+        pipeline_info.pDynamicState = &dynamic_info;
+
+        VkPipeline new_pipeline;
+        if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &new_pipeline) != VK_SUCCESS) {
+            fmt::println("failed to create graphics pipeline");
+            return VK_NULL_HANDLE;
+        }
+        return new_pipeline;
+    }
+
+    void set_shaders(VkShaderModule vert, VkShaderModule frag) {
+        _shader_stages.clear();
+        _shader_stages.push_back(pipeline_shader_stage_create_info(VK_SHADER_STAGE_VERTEX_BIT, vert));
+        _shader_stages.push_back(pipeline_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT, frag));
+    }
+
+    void set_input_topology(VkPrimitiveTopology topology) {
+        _input_assembly.topology = topology;
+        _input_assembly.primitiveRestartEnable = VK_FALSE;
+    }
+
+    void set_polygon_mode(VkPolygonMode mode) {
+        _rasterizer.polygonMode = mode;
+        _rasterizer.lineWidth = 1.f;
+    }
+
+    void set_cull_mode(VkCullModeFlags cull_mode, VkFrontFace front_face) {
+        _rasterizer.cullMode = cull_mode;
+        _rasterizer.frontFace = front_face;
+    }
+
+    void set_multisampling_none() {
+        _multisampling.sampleShadingEnable = VK_FALSE;
+        _multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+        _multisampling.minSampleShading = 1.f;
+        _multisampling.pSampleMask = nullptr;
+        _multisampling.alphaToCoverageEnable = VK_FALSE;
+        _multisampling.alphaToOneEnable = VK_FALSE;
+    }
+
+    void disable_blending() {
+        _color_blend_attachment.colorWriteMask =
+            VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+            VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+        _color_blend_attachment.blendEnable = VK_FALSE;
+    }
+
+    void set_color_attachment_format(VkFormat format) {
+        _color_attachment_format = format;
+        _render_info.colorAttachmentCount = 1;
+        _render_info.pColorAttachmentFormats = &_color_attachment_format;
+    }
+
+    void set_depth_format(VkFormat format) {
+        _render_info.depthAttachmentFormat = format;
+    }
+
+    void disable_depthtest() {
+        _depth_stencil.depthTestEnable = VK_FALSE;
+        _depth_stencil.depthWriteEnable = VK_FALSE;
+        _depth_stencil.depthCompareOp = VK_COMPARE_OP_NEVER;
+        _depth_stencil.depthBoundsTestEnable = VK_FALSE;
+        _depth_stencil.stencilTestEnable = VK_FALSE;
+        _depth_stencil.front = {};
+        _depth_stencil.back = {};
+        _depth_stencil.minDepthBounds = 0.f;
+        _depth_stencil.maxDepthBounds = 1.f;
+    }
+};
+
 namespace gvk {
     void init();
     void quit();
@@ -458,13 +619,9 @@ namespace gvk {
     inline AllocatedImage _draw_image;
     inline VkExtent2D _draw_extent;
 
-    // descriptors
-    DescriptorAllocator global_descriptor_allocator;
-    VkDescriptorSet _draw_image_descriptors;
-    VkDescriptorSetLayout _draw_image_descriptor_layout;
-
-    VkPipeline _gradient_pipeline;
-    VkPipelineLayout _gradient_pipeline_layout;
+    // triangle pipeline
+    VkPipeline _triangle_pipeline;
+    VkPipelineLayout _triangle_pipeline_layout;
 
     // imgui resources
     VkFence _imm_fence;
@@ -566,12 +723,6 @@ namespace gvk {
         ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
 
         vkCmdEndRendering(cmd);
-    }
-
-    void draw_background (VkCommandBuffer cmd) {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _gradient_pipeline);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _gradient_pipeline_layout, 0, 1, &_draw_image_descriptors, 0, nullptr);
-        vkCmdDispatch(cmd, std::ceil(_draw_extent.width / 16.0), std::ceil(_draw_extent.height / 16.0), 1);
     }
 
     void init_vulkan() {
@@ -725,84 +876,71 @@ namespace gvk {
         });
     }
 
-    void init_descriptors() {
-        // descriptor pool of 10 sets with 1 image each
-        vector<DescriptorAllocator::PoolSizeRatio> sizes = {
-            {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1}
-        };
-
-        global_descriptor_allocator.init_pool(_vk_device, 10, sizes);
-
-        // descriptor set layout for compute draw
-        {
-            DescriptorLayoutBuilder builder;
-            builder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
-            _draw_image_descriptor_layout = builder.build(_vk_device, VK_SHADER_STAGE_COMPUTE_BIT);
+    void init_triangle_pipeline() {
+        VkShaderModule triangle_frag_shader;
+        if (!load_shader_module("../shaders/colored_triangle.frag.spv", _vk_device, &triangle_frag_shader)) {
+            fmt::println("Error when building the triangle fragment shader");
         }
 
-        _draw_image_descriptors = global_descriptor_allocator.allocate(_vk_device, _draw_image_descriptor_layout);
-        VkDescriptorImageInfo img_info{};
-        img_info.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-        img_info.imageView = _draw_image.image_view;
+        VkShaderModule triangle_vert_shader;
+        if (!load_shader_module("../shaders/colored_triangle.vert.spv", _vk_device, &triangle_vert_shader)) {
+            fmt::println("Error when building the triangle vertex shader");
+        }
 
-        VkWriteDescriptorSet draw_image_write = {};
-        draw_image_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        draw_image_write.pNext = nullptr;
+        VkPipelineLayoutCreateInfo layout_info = pipeline_layout_create_info();
+        VK_CHECK(vkCreatePipelineLayout(_vk_device, &layout_info, nullptr, &_triangle_pipeline_layout));
 
-        draw_image_write.dstBinding = 0;
-        draw_image_write.dstSet = _draw_image_descriptors;
-        draw_image_write.descriptorCount = 1;
-        draw_image_write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-        draw_image_write.pImageInfo = &img_info;
+        PipelineBuilder builder;
+        builder._pipeline_layout = _triangle_pipeline_layout;
+        builder.set_shaders(triangle_vert_shader, triangle_frag_shader);
+        builder.set_input_topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+        builder.set_polygon_mode(VK_POLYGON_MODE_FILL);
+        builder.set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_CLOCKWISE);
+        builder.set_multisampling_none();
+        builder.disable_blending();
+        builder.disable_depthtest();
+        builder.set_color_attachment_format(_draw_image.format);
+        builder.set_depth_format(VK_FORMAT_UNDEFINED);
 
-        vkUpdateDescriptorSets(_vk_device, 1, &draw_image_write, 0, nullptr);
+        _triangle_pipeline = builder.build_pipeline(_vk_device);
+
+        vkDestroyShaderModule(_vk_device, triangle_frag_shader, nullptr);
+        vkDestroyShaderModule(_vk_device, triangle_vert_shader, nullptr);
 
         _main_deletion_queue.push_function([&]() {
-           global_descriptor_allocator.destroy_pool(_vk_device);
-
-            vkDestroyDescriptorSetLayout(_vk_device, _draw_image_descriptor_layout, nullptr);
+            vkDestroyPipelineLayout(_vk_device, _triangle_pipeline_layout, nullptr);
+            vkDestroyPipeline(_vk_device, _triangle_pipeline, nullptr);
         });
     }
 
-    void init_background_pipelines() {
-        VkPipelineLayoutCreateInfo compute_layout{};
-        compute_layout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        compute_layout.pNext = nullptr;
-        compute_layout.pSetLayouts = &_draw_image_descriptor_layout;
-        compute_layout.setLayoutCount = 1;
+    void draw_geometry(VkCommandBuffer cmd) {
+        VkRenderingAttachmentInfo color_attachment = attachment_info(_draw_image.image_view, nullptr, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        VkRenderingInfo render_info = rendering_info(_draw_extent, &color_attachment, nullptr);
+        vkCmdBeginRendering(cmd, &render_info);
 
-        VK_CHECK(vkCreatePipelineLayout(_vk_device, &compute_layout, nullptr, &_gradient_pipeline_layout));
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _triangle_pipeline);
 
-        VkShaderModule compute_draw_shader;
-        if (!load_shader_module("../shaders/gradient.comp.spv", _vk_device, &compute_draw_shader)) {
-            fmt::println("error when building the compute shader");
-        }
+        VkViewport viewport = {};
+        viewport.x = 0;
+        viewport.y = 0;
+        viewport.width = (float)_draw_extent.width;
+        viewport.height = (float)_draw_extent.height;
+        viewport.minDepth = 0.f;
+        viewport.maxDepth = 1.f;
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
 
-        VkPipelineShaderStageCreateInfo stageinfo{};
-        stageinfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-        stageinfo.pNext = nullptr;
-        stageinfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-        stageinfo.module = compute_draw_shader;
-        stageinfo.pName = "main";
+        VkRect2D scissor = {};
+        scissor.offset = {0, 0};
+        scissor.extent = _draw_extent;
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-        VkComputePipelineCreateInfo compute_pipeline_create_info{};
-        compute_pipeline_create_info.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
-        compute_pipeline_create_info.pNext = nullptr;
-        compute_pipeline_create_info.layout = _gradient_pipeline_layout;
-        compute_pipeline_create_info.stage = stageinfo;
+        vkCmdDraw(cmd, 3, 1, 0, 0);
 
-        VK_CHECK(vkCreateComputePipelines(_vk_device, VK_NULL_HANDLE, 1, &compute_pipeline_create_info, nullptr, &_gradient_pipeline));
-
-        vkDestroyShaderModule(_vk_device, compute_draw_shader, nullptr);
-
-        _main_deletion_queue.push_function([&]() {
-            vkDestroyPipelineLayout(_vk_device, _gradient_pipeline_layout, nullptr);
-            vkDestroyPipeline(_vk_device, _gradient_pipeline, nullptr);
-        });
+        vkCmdEndRendering(cmd);
     }
 
     void init_pipelines() {
-        init_background_pipelines();
+        init_triangle_pipeline();
     }
 
     void init() {
@@ -817,7 +955,6 @@ namespace gvk {
         init_swapchain();
         init_commands();
         init_sync_structures();
-        init_descriptors();
         init_pipelines();
         init_imgui();
     }
@@ -838,14 +975,13 @@ namespace gvk {
         VkCommandBufferBeginInfo cmd_begin_info = create_command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
         VK_CHECK(vkBeginCommandBuffer(cmd, &cmd_begin_info));
 
-        // turn swapchain image writeable
-        transition_image(cmd, _draw_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+        // transition directly to color attachment for geometry
+        transition_image(cmd, _draw_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
-        // useless testing stuff
-        draw_background(cmd);
+        draw_geometry(cmd);
 
-        // turn swapchain image presentable
-        transition_image(cmd, _draw_image.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        // blit to swapchain
+        transition_image(cmd, _draw_image.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
         transition_image(cmd, _swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
         copy_image_to_image(cmd, _draw_image.image, _swapchain_images[swapchain_image_index], _draw_extent, _swapchain_extent);
@@ -883,6 +1019,7 @@ namespace gvk {
 
         _frame_number++;
     }
+
 
     void quit() {
         destroy_swapchain();
