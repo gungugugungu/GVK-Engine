@@ -1147,6 +1147,7 @@ namespace gvk {
         init_commands();
         init_sync_structures();
         init_pipelines();
+        init_default_data();
         init_imgui();
     }
 
