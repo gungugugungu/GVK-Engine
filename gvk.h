@@ -242,9 +242,9 @@ void copy_image_to_image(VkCommandBuffer cmd, VkImage source, VkImage destinatio
 
 struct DeletionQueue
 {
-    std::deque<std::function<void()>> deletors;
+    deque<function<void()>> deletors;
 
-    void push_function(std::function<void()>&& function) {
+    void push_function(function<void()>&& function) {
         deletors.push_back(function);
     }
 
@@ -266,7 +266,7 @@ struct AllocatedImage {
 };
 
 struct DescriptorLayoutBuilder {
-    std::vector<VkDescriptorSetLayoutBinding> bindings;
+    vector<VkDescriptorSetLayoutBinding> bindings;
 
     void add_binding(uint32_t binding, VkDescriptorType type);
     void clear();
@@ -316,16 +316,16 @@ struct DescriptorAllocator {
 
     VkDescriptorPool pool;
 
-    void init_pool(VkDevice device, uint32_t maxSets, std::span<PoolSizeRatio> poolRatios);
+    void init_pool(VkDevice device, uint32_t maxSets, span<PoolSizeRatio> poolRatios);
     void clear_descriptors(VkDevice device);
     void destroy_pool(VkDevice device);
 
     VkDescriptorSet allocate(VkDevice device, VkDescriptorSetLayout layout);
 };
 
-void DescriptorAllocator::init_pool(VkDevice device, uint32_t maxSets, std::span<PoolSizeRatio> poolRatios)
+void DescriptorAllocator::init_pool(VkDevice device, uint32_t maxSets, span<PoolSizeRatio> poolRatios)
 {
-    std::vector<VkDescriptorPoolSize> poolSizes;
+    vector<VkDescriptorPoolSize> poolSizes;
     for (PoolSizeRatio ratio : poolRatios) {
         poolSizes.push_back(VkDescriptorPoolSize{
             .type = ratio.type,
@@ -452,7 +452,7 @@ VkRenderingInfo rendering_info(VkExtent2D render_extent, VkRenderingAttachmentIn
 }
 
 struct PipelineBuilder {
-    std::vector<VkPipelineShaderStageCreateInfo> _shader_stages;
+    vector<VkPipelineShaderStageCreateInfo> _shader_stages;
     VkPipelineInputAssemblyStateCreateInfo _input_assembly;
     VkPipelineRasterizationStateCreateInfo _rasterizer;
     VkPipelineColorBlendAttachmentState _color_blend_attachment;
@@ -636,8 +636,8 @@ namespace gvk {
     inline VkSwapchainKHR _swapchain;
     inline VkFormat _swapchain_image_format;
 
-    inline std::vector<VkImage> _swapchain_images;
-    inline std::vector<VkImageView> _swapchain_image_views;
+    inline vector<VkImage> _swapchain_images;
+    inline vector<VkImageView> _swapchain_image_views;
     inline VkExtent2D _swapchain_extent;
 
     struct FrameData {
@@ -673,9 +673,10 @@ namespace gvk {
     VkPipelineLayout _mesh_pipeline_layout;
     VkPipeline _mesh_pipeline;
 
-    GPUMeshBuffers rectangle;
+    // mesh loading testing stuffity stuff TODO: remove
+    vector<shared_ptr<MeshAsset>> test_meshes;
 
-    void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function) {
+    void immediate_submit(function<void(VkCommandBuffer cmd)>&& function) {
         VK_CHECK(vkResetFences(_vk_device, 1, &_imm_fence));
         VK_CHECK(vkResetCommandBuffer(_imm_command_buffer, 0));
 
@@ -718,7 +719,7 @@ namespace gvk {
         vmaDestroyBuffer(_allocator, buffer.buffer, buffer.allocation);
     }
 
-    GPUMeshBuffers upload_mesh(std::span<uint32_t> indices, std::span<Vertex> vertices) {
+    GPUMeshBuffers upload_mesh(span<uint32_t> indices, span<Vertex> vertices) {
         const size_t vb_size = vertices.size() * sizeof(Vertex);
         const size_t ib_size = indices.size() * sizeof(uint32_t);
 
@@ -775,7 +776,7 @@ namespace gvk {
         pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
         pool_info.maxSets = 1000;
-        pool_info.poolSizeCount = (uint32_t)std::size(pool_sizes);
+        pool_info.poolSizeCount = (uint32_t)size(pool_sizes);
         pool_info.pPoolSizes = pool_sizes;
 
         VkDescriptorPool imguiPool;
@@ -1023,34 +1024,7 @@ namespace gvk {
     }
 
     void init_default_data() {
-        std::array<Vertex,4> rect_vertices;
 
-        rect_vertices[0].position = {0.5,-0.5, 0};
-        rect_vertices[1].position = {0.5,0.5, 0};
-        rect_vertices[2].position = {-0.5,-0.5, 0};
-        rect_vertices[3].position = {-0.5,0.5, 0};
-
-        rect_vertices[0].color = {0,0, 0,1};
-        rect_vertices[1].color = { 0.5,0.5,0.5 ,1};
-        rect_vertices[2].color = { 1,0, 0,1 };
-        rect_vertices[3].color = { 0,1, 0,1 };
-
-        std::array<uint32_t,6> rect_indices;
-
-        rect_indices[0] = 0;
-        rect_indices[1] = 1;
-        rect_indices[2] = 2;
-
-        rect_indices[3] = 2;
-        rect_indices[4] = 1;
-        rect_indices[5] = 3;
-
-        rectangle = upload_mesh(rect_indices,rect_vertices);
-
-        _main_deletion_queue.push_function([&](){
-            destroy_buffer(rectangle.index_buffer);
-            destroy_buffer(rectangle.vertex_buffer);
-        });
     }
 
     void init_mesh_pipeline() {
@@ -1112,8 +1086,6 @@ namespace gvk {
         VkRenderingInfo render_info = rendering_info(_draw_extent, &color_attachment, nullptr);
         vkCmdBeginRendering(cmd, &render_info);
 
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _triangle_pipeline);
-
         VkViewport viewport = {};
         viewport.x = 0;
         viewport.y = 0;
@@ -1128,18 +1100,16 @@ namespace gvk {
         scissor.extent = _draw_extent;
         vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-        vkCmdDraw(cmd, 3, 1, 0, 0);
-
-        vkCmdDraw(cmd, 3, 1, 0, 0);
-
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _mesh_pipeline);
 
         GPUDrawPushConstants push_constants;
         push_constants.world_matrix = glm::mat4{ 1.f };
-        push_constants.vertex_buffer = rectangle.vertex_buffer_address;
+        push_constants.vertex_buffer = test_meshes[2]->mesh_buffers.vertex_buffer_address;
 
         vkCmdPushConstants(cmd, _mesh_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(GPUDrawPushConstants), &push_constants);
-        vkCmdBindIndexBuffer(cmd, rectangle.index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdBindIndexBuffer(cmd, test_meshes[2]->mesh_buffers.index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+
+        vkCmdDrawIndexed(cmd, test_meshes[2]->surfaces[0].count, 1, test_meshes[2]->surfaces[0].start_index, 0, 0);
 
         vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
 
@@ -1151,14 +1121,13 @@ namespace gvk {
         init_mesh_pipeline();
     }
 
-    std::optional<std::vector<std::shared_ptr<MeshAsset>>>
-    load_gltf_meshes(std::filesystem::path path)
+    optional<vector<shared_ptr<MeshAsset>>> load_gltf_meshes(filesystem::path path)
     {
         fmt::println("Loading GLTF: {}", path.string());
 
         tinygltf::TinyGLTF loader;
         tinygltf::Model model;
-        std::string err, warn;
+        string err, warn;
 
         bool ok = (path.extension() == ".glb")
             ? loader.LoadBinaryFromFile(&model, &err, &warn, path.string())
@@ -1184,10 +1153,10 @@ namespace gvk {
                  * tinygltf::GetNumComponentsInType(acc.type);
         };
 
-        std::vector<std::shared_ptr<MeshAsset>> meshes;
+        vector<shared_ptr<MeshAsset>> meshes;
 
-        std::vector<uint32_t> indices;
-        std::vector<Vertex>   vertices;
+        vector<uint32_t> indices;
+        vector<Vertex>   vertices;
 
         for (const tinygltf::Mesh& mesh : model.meshes) {
             MeshAsset new_mesh;
@@ -1331,7 +1300,7 @@ namespace gvk {
             }
 
             new_mesh.mesh_buffers = upload_mesh(indices, vertices);
-            meshes.emplace_back(std::make_shared<MeshAsset>(std::move(new_mesh)));
+            meshes.emplace_back(make_shared<MeshAsset>(move(new_mesh)));
         }
 
         return meshes;
@@ -1352,6 +1321,9 @@ namespace gvk {
         init_pipelines();
         init_default_data();
         init_imgui();
+
+        // TODO: remove test monkey
+        test_meshes = load_gltf_meshes("../test_monkey.glb").value();
     }
 
     void draw() {
