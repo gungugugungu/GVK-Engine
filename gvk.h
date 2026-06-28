@@ -28,14 +28,7 @@
 #include <filesystem>
 #include <iostream>
 #include <glm/gtx/quaternion.hpp>
-#include "include/fastgltf/include/fastgltf/glm_element_traits.hpp"
-#include "include/fastgltf/include/fastgltf/tools.hpp"
-#include "include/fastgltf/include/fastgltf/core.hpp"
-#include "include/fastgltf/include/fastgltf/dxmath_element_traits.hpp"
-#include "include/fastgltf/include/fastgltf/base64.hpp"
-#include "include/fastgltf/include/fastgltf/math.hpp"
-#include "include/fastgltf/include/fastgltf/types.hpp"
-#include "include/fastgltf/include/fastgltf/util.hpp"
+#include "include/tinygltf/tiny_gltf.h"
 
 #define VK_CHECK(x) \
 do { \
@@ -1158,7 +1151,191 @@ namespace gvk {
         init_mesh_pipeline();
     }
 
-    std::optional<std::vector<std::shared_ptr<MeshAsset>>> load_gltf_meshes(std::filesystem::path path);
+    std::optional<std::vector<std::shared_ptr<MeshAsset>>>
+    load_gltf_meshes(std::filesystem::path path)
+    {
+        fmt::println("Loading GLTF: {}", path.string());
+
+        tinygltf::TinyGLTF loader;
+        tinygltf::Model model;
+        std::string err, warn;
+
+        bool ok = (path.extension() == ".glb")
+            ? loader.LoadBinaryFromFile(&model, &err, &warn, path.string())
+            : loader.LoadASCIIFromFile (&model, &err, &warn, path.string());
+
+        if (!warn.empty()) fmt::println("GLTF warning: {}", warn);
+        if (!err.empty())  fmt::println("GLTF error: {}",   err);
+        if (!ok) {
+            fmt::println("Failed to load GLTF: {}", path.string());
+            return {};
+        }
+
+        auto data_ptr = [&](const tinygltf::Accessor& acc) -> const uint8_t* {
+            const auto& bv  = model.bufferViews[acc.bufferView];
+            const auto& buf = model.buffers[bv.buffer];
+            return buf.data.data() + bv.byteOffset + acc.byteOffset;
+        };
+
+        auto stride_of = [&](const tinygltf::Accessor& acc) -> size_t {
+            const auto& bv = model.bufferViews[acc.bufferView];
+            if (bv.byteStride != 0) return bv.byteStride;
+            return tinygltf::GetComponentSizeInBytes(acc.componentType)
+                 * tinygltf::GetNumComponentsInType(acc.type);
+        };
+
+        std::vector<std::shared_ptr<MeshAsset>> meshes;
+
+        std::vector<uint32_t> indices;
+        std::vector<Vertex>   vertices;
+
+        for (const tinygltf::Mesh& mesh : model.meshes) {
+            MeshAsset new_mesh;
+            new_mesh.name = mesh.name;
+            indices.clear();
+            vertices.clear();
+
+            for (const tinygltf::Primitive& prim : mesh.primitives) {
+                GeoSurface new_surface;
+                new_surface.start_index = (uint32_t)indices.size();
+                const size_t initial_vtx = vertices.size();
+
+                // ---- INDEX BUFFER ----
+                {
+                    const tinygltf::Accessor& acc = model.accessors[prim.indices];
+                    new_surface.count = (uint32_t)acc.count;
+                    indices.reserve(indices.size() + acc.count);
+                    const uint8_t* idx_data = data_ptr(acc);
+
+                    switch (acc.componentType) {
+                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+                            for (size_t i = 0; i < acc.count; i++)
+                                indices.push_back(idx_data[i] + (uint32_t)initial_vtx);
+                            break;
+                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+                            for (size_t i = 0; i < acc.count; i++)
+                                indices.push_back(
+                                    reinterpret_cast<const uint16_t*>(idx_data)[i]
+                                    + (uint32_t)initial_vtx);
+                            break;
+                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
+                            for (size_t i = 0; i < acc.count; i++)
+                                indices.push_back(
+                                    reinterpret_cast<const uint32_t*>(idx_data)[i]
+                                    + (uint32_t)initial_vtx);
+                            break;
+                        default:
+                            fmt::println("GLTF: unsupported index component type {}", acc.componentType);
+                            return {};
+                    }
+                }
+
+                // ---- POSITION ----
+                {
+                    auto it = prim.attributes.find("POSITION");
+                    if (it == prim.attributes.end()) {
+                        fmt::println("GLTF: primitive missing POSITION attribute");
+                        return {};
+                    }
+                    const tinygltf::Accessor& acc = model.accessors[it->second];
+                    const size_t s = stride_of(acc);
+                    const uint8_t* ptr = data_ptr(acc);
+                    vertices.resize(initial_vtx + acc.count);
+
+                    for (size_t i = 0; i < acc.count; i++) {
+                        Vertex vtx{};
+                        vtx.position = *reinterpret_cast<const glm::vec3*>(ptr + i * s);
+                        vtx.normal   = {1, 0, 0};
+                        vtx.color    = glm::vec4{1.f};
+                        vtx.uv_x     = 0;
+                        vtx.uv_y     = 0;
+                        vertices[initial_vtx + i] = vtx;
+                    }
+                }
+
+                // ---- NORMAL ----
+                {
+                    auto it = prim.attributes.find("NORMAL");
+                    if (it != prim.attributes.end()) {
+                        const tinygltf::Accessor& acc = model.accessors[it->second];
+                        const size_t s   = stride_of(acc);
+                        const uint8_t* ptr = data_ptr(acc);
+                        for (size_t i = 0; i < acc.count; i++)
+                            vertices[initial_vtx + i].normal =
+                                *reinterpret_cast<const glm::vec3*>(ptr + i * s);
+                    }
+                }
+
+                // ---- TEXCOORD_0 ---- (eh why not it'll come in handy later)
+                {
+                    auto it = prim.attributes.find("TEXCOORD_0");
+                    if (it != prim.attributes.end()) {
+                        const tinygltf::Accessor& acc = model.accessors[it->second];
+                        const size_t s   = stride_of(acc);
+                        const uint8_t* ptr = data_ptr(acc);
+                        for (size_t i = 0; i < acc.count; i++) {
+                            const glm::vec2 uv =
+                                *reinterpret_cast<const glm::vec2*>(ptr + i * s);
+                            vertices[initial_vtx + i].uv_x = uv.x;
+                            vertices[initial_vtx + i].uv_y = uv.y;
+                        }
+                    }
+                }
+
+                // ---- COLOR_0 ----
+                {
+                    auto it = prim.attributes.find("COLOR_0");
+                    if (it != prim.attributes.end()) {
+                        const tinygltf::Accessor& acc = model.accessors[it->second];
+                        const size_t s   = stride_of(acc);
+                        const uint8_t* ptr = data_ptr(acc);
+                        const bool is_vec4 = (acc.type == TINYGLTF_TYPE_VEC4);
+
+                        for (size_t i = 0; i < acc.count; i++) {
+                            glm::vec4 col{1.f};
+                            const uint8_t* elem = ptr + i * s;
+
+                            if (acc.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT) {
+                                const float* f = reinterpret_cast<const float*>(elem);
+                                col = is_vec4
+                                    ? glm::vec4(f[0], f[1], f[2], f[3])
+                                    : glm::vec4(f[0], f[1], f[2], 1.f);
+
+                            } else if (acc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
+                                col = is_vec4
+                                    ? glm::vec4(elem[0]/255.f, elem[1]/255.f,
+                                                elem[2]/255.f, elem[3]/255.f)
+                                    : glm::vec4(elem[0]/255.f, elem[1]/255.f,
+                                                elem[2]/255.f, 1.f);
+
+                            } else if (acc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
+                                const uint16_t* u = reinterpret_cast<const uint16_t*>(elem);
+                                col = is_vec4
+                                    ? glm::vec4(u[0]/65535.f, u[1]/65535.f,
+                                                u[2]/65535.f, u[3]/65535.f)
+                                    : glm::vec4(u[0]/65535.f, u[1]/65535.f,
+                                                u[2]/65535.f, 1.f);
+                            }
+                            vertices[initial_vtx + i].color = col;
+                        }
+                    }
+                }
+
+                new_mesh.surfaces.push_back(new_surface);
+            }
+
+            constexpr bool override_colors = true;
+            if (override_colors) {
+                for (Vertex& vtx : vertices)
+                    vtx.color = glm::vec4(vtx.normal, 1.f);
+            }
+
+            new_mesh.mesh_buffers = upload_mesh(indices, vertices);
+            meshes.emplace_back(std::make_shared<MeshAsset>(std::move(new_mesh)));
+        }
+
+        return meshes;
+    }
 
     void init() {
         // --- SDL SETUP ---
