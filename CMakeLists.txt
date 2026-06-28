@@ -40,6 +40,9 @@ target_link_libraries(ImGui PUBLIC
 # --- FMT ---
 add_subdirectory(${CMAKE_SOURCE_DIR}/include/fmt)
 
+# --- FASTGLTF ---
+add_subdirectory(${CMAKE_SOURCE_DIR}/include/fastgltf)
+
 # ================ Executable ================
 
 add_executable(GVK
@@ -51,6 +54,7 @@ target_link_libraries(GVK
         SDL3::SDL3
         Vulkan::Vulkan
         fmt
+        fastgltf::fastgltf
         vk-bootstrap::vk-bootstrap
         ImGui
         ${CMAKE_DL_LIBS}

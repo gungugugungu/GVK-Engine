@@ -16,3 +16,6 @@
 [submodule "include/fmt"]
 	path = include/fmt
 	url = https://github.com/fmtlib/fmt.git
+[submodule "include/fastgltf"]
+	path = include/fastgltf
+	url = https://github.com/spnda/fastgltf

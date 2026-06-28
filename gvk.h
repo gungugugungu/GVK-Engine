@@ -24,6 +24,18 @@
 #include "imgui.h"
 #include "backends/imgui_impl_sdl3.h"
 #include "backends/imgui_impl_vulkan.h"
+#include <unordered_map>
+#include <filesystem>
+#include <iostream>
+#include <glm/gtx/quaternion.hpp>
+#include "include/fastgltf/include/fastgltf/glm_element_traits.hpp"
+#include "include/fastgltf/include/fastgltf/tools.hpp"
+#include "include/fastgltf/include/fastgltf/core.hpp"
+#include "include/fastgltf/include/fastgltf/dxmath_element_traits.hpp"
+#include "include/fastgltf/include/fastgltf/base64.hpp"
+#include "include/fastgltf/include/fastgltf/math.hpp"
+#include "include/fastgltf/include/fastgltf/types.hpp"
+#include "include/fastgltf/include/fastgltf/util.hpp"
 
 #define VK_CHECK(x) \
 do { \
@@ -597,6 +609,18 @@ struct GPUDrawPushConstants {
     VkDeviceAddress vertex_buffer;
 };
 
+struct GeoSurface {
+    uint32_t start_index;
+    uint32_t count;
+};
+
+struct MeshAsset {
+    string name;
+
+    vector<GeoSurface> surfaces;
+    GPUMeshBuffers mesh_buffers;
+};
+
 namespace gvk {
     void init();
     void quit();
@@ -1133,6 +1157,8 @@ namespace gvk {
         init_triangle_pipeline();
         init_mesh_pipeline();
     }
+
+    std::optional<std::vector<std::shared_ptr<MeshAsset>>> load_gltf_meshes(std::filesystem::path path);
 
     void init() {
         // --- SDL SETUP ---
