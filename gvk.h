@@ -664,6 +664,184 @@ struct MeshAsset {
     GPUMeshBuffers mesh_buffers;
 };
 
+struct GPUSceneData {
+    glm::mat4 view;
+    glm::mat4 proj;
+    glm::mat4 viewproj;
+    glm::vec4 ambient_color;
+    glm::vec4 sunlight_direction;
+    glm::vec4 sunlight_color;
+};
+
+struct DescriptorAllocatorGrowable {
+public:
+    struct PoolSizeRatio {
+        VkDescriptorType type;
+        float ratio;
+    };
+
+    void init(VkDevice device, uint32_t max_sets, span<PoolSizeRatio> pool_ratios) {
+        ratios.clear();
+
+        for (auto r : pool_ratios) {
+            ratios.push_back(r);
+        }
+
+        VkDescriptorPool new_pool = create_pool(device, max_sets, pool_ratios);
+
+        sets_per_pool = max_sets*1.5f;
+
+        ready_pools.push_back(new_pool);
+    }
+
+    void clear_pools(VkDevice device) {
+        for (auto p : ready_pools) {
+            vkResetDescriptorPool(device, p, 0);
+        }
+        for (auto p : full_pools) {
+            vkResetDescriptorPool(device, p, 0);
+            ready_pools.push_back(p);
+        }
+        full_pools.clear();
+    }
+
+    void destroy_pools(VkDevice device) {
+        for (auto p : ready_pools) {
+            vkDestroyDescriptorPool(device, p, nullptr);
+        }
+        ready_pools.clear();
+        for (auto p : full_pools) {
+            vkDestroyDescriptorPool(device, p, nullptr);
+        }
+        full_pools.clear();
+    }
+
+    VkDescriptorSet allocate(VkDevice device, VkDescriptorSetLayout layout, void* pNext = nullptr) {
+        VkDescriptorPool pool_to_use = get_pool(device);
+
+        VkDescriptorSetAllocateInfo allocate_info = {};
+        allocate_info.pNext = pNext;
+        allocate_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocate_info.descriptorPool = pool_to_use;
+        allocate_info.descriptorSetCount = 1;
+        allocate_info.pSetLayouts = &layout;
+
+        VkDescriptorSet ds;
+        VkResult result = vkAllocateDescriptorSets(device, &allocate_info, &ds);
+
+        if (result == VK_ERROR_OUT_OF_POOL_MEMORY || result == VK_ERROR_FRAGMENTED_POOL) {
+            full_pools.push_back(pool_to_use);
+
+            pool_to_use = get_pool(device);
+            allocate_info.descriptorPool = pool_to_use;
+
+            VK_CHECK(vkAllocateDescriptorSets(device, &allocate_info, &ds));
+        }
+
+        ready_pools.push_back(pool_to_use);
+        return ds;
+    }
+
+private:
+    VkDescriptorPool get_pool(VkDevice device) {
+        VkDescriptorPool new_pool;
+        if (ready_pools.size() != 0) {
+            new_pool = ready_pools.back();
+            ready_pools.pop_back();
+        } else {
+            new_pool = create_pool(device, sets_per_pool, ratios);
+
+            sets_per_pool = sets_per_pool * 1.5;
+            if (sets_per_pool > 4096) sets_per_pool = 4096;
+
+        }
+
+        return new_pool;
+    }
+
+    VkDescriptorPool create_pool(VkDevice device, uint32_t set_count, span<PoolSizeRatio> pool_ratios) {
+        vector<VkDescriptorPoolSize> pool_sizes;
+        for (PoolSizeRatio ratio : pool_ratios) {
+            pool_sizes.push_back(VkDescriptorPoolSize{
+            .type = ratio.type,
+            .descriptorCount = static_cast<uint32_t>(ratio.ratio * set_count)
+            });
+        }
+
+        VkDescriptorPoolCreateInfo pool_info = {};
+        pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        pool_info.flags = 0;
+        pool_info.maxSets = set_count;
+        pool_info.poolSizeCount = static_cast<uint32_t>(pool_sizes.size());
+        pool_info.pPoolSizes = pool_sizes.data();
+
+        VkDescriptorPool new_pool;
+        vkCreateDescriptorPool(device, &pool_info, nullptr, &new_pool);
+        return new_pool;
+    }
+
+    vector<PoolSizeRatio> ratios;
+    vector<VkDescriptorPool> full_pools;
+    vector<VkDescriptorPool> ready_pools;
+    uint32_t sets_per_pool;
+};
+
+struct DescriptorWriter {
+    deque<VkDescriptorImageInfo> image_infos;
+    deque<VkDescriptorBufferInfo> buffer_infos;
+    vector<VkWriteDescriptorSet> writes;
+
+    void write_image(int binding, VkImageView image, VkSampler sampler, VkImageLayout layout, VkDescriptorType type) {
+        VkDescriptorImageInfo& info = image_infos.emplace_back(VkDescriptorImageInfo{
+        .sampler = sampler,
+        .imageView = image,
+        .imageLayout = layout
+        });
+
+        VkWriteDescriptorSet write = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+
+        write.dstBinding = binding;
+        write.dstSet = VK_NULL_HANDLE;
+        write.descriptorCount = 1;
+        write.descriptorType = type;
+        write.pImageInfo = &info;
+
+        writes.push_back(write);
+    }
+
+    void write_buffer(int binding, VkBuffer buffer, size_t size, size_t offset, VkDescriptorType type) {
+        VkDescriptorBufferInfo& info = buffer_infos.emplace_back(VkDescriptorBufferInfo{
+        .buffer = buffer,
+        .offset = offset,
+        .range = size
+        });
+
+        VkWriteDescriptorSet write = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+
+        write.dstBinding = binding;
+        write.dstSet = VK_NULL_HANDLE;
+        write.descriptorCount = 1;
+        write.descriptorType = type;
+        write.pBufferInfo = &info;
+
+        writes.push_back(write);
+    }
+
+    void clear() {
+        image_infos.clear();
+        writes.clear();
+        buffer_infos.clear();
+    }
+
+    void update_set(VkDevice device, VkDescriptorSet set) {
+        for (VkWriteDescriptorSet& write : writes) {
+            write.dstSet = set;
+        }
+
+        vkUpdateDescriptorSets(device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+    }
+};
+
 namespace gvk {
     void init();
     void quit();
@@ -696,6 +874,7 @@ namespace gvk {
         VkSemaphore _swapchain_semaphore, _render_semaphore;
         VkFence _render_fence;
         DeletionQueue _deletion_queue;
+        DescriptorAllocatorGrowable _frame_descriptors;
     };
     constexpr unsigned int FRAME_OVERLAP = 2;
 
@@ -712,6 +891,11 @@ namespace gvk {
     inline AllocatedImage _depth_image;
     inline VkExtent2D _draw_extent;
 
+    // descriptors
+    DescriptorAllocator global_descriptor_allocator;
+    VkDescriptorSet _draw_image_descriptors;
+    VkDescriptorSetLayout _draw_image_descriptor_layout;
+
     // triangle pipeline
     inline VkPipeline _triangle_pipeline;
     inline VkPipelineLayout _triangle_pipeline_layout;
@@ -723,6 +907,9 @@ namespace gvk {
 
     inline VkPipelineLayout _mesh_pipeline_layout;
     inline VkPipeline _mesh_pipeline;
+
+    GPUSceneData scene_data;
+    VkDescriptorSetLayout _gpu_scene_data_descriptor_layout;
 
     // mesh loading testing stuffity stuff TODO: remove
     inline vector<shared_ptr<MeshAsset>> test_meshes;
@@ -1156,6 +1343,22 @@ namespace gvk {
         VkRenderingAttachmentInfo color_attachment = attachment_info(_draw_image.image_view, nullptr, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         VkRenderingAttachmentInfo depth_attachment = depth_attachment_info(_depth_image.image_view, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
         VkRenderingInfo render_info = rendering_info(_draw_extent, &color_attachment, &depth_attachment);
+
+        AllocatedBuffer gpu_scene_data_buffer = create_buffer(sizeof(GPUSceneData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+
+        get_current_frame()._deletion_queue.push_function([=]() {
+            destroy_buffer(gpu_scene_data_buffer);
+        });
+
+        GPUSceneData* scene_uniform_data = static_cast<GPUSceneData *>(gpu_scene_data_buffer.allocation->GetMappedData());
+        *scene_uniform_data = scene_data;
+
+        VkDescriptorSet global_descriptor = get_current_frame()._frame_descriptors.allocate(_vk_device, _gpu_scene_data_descriptor_layout);
+
+        DescriptorWriter writer;
+        writer.write_buffer(0, gpu_scene_data_buffer.buffer, sizeof(GPUSceneData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+        writer.update_set(_vk_device, global_descriptor);
+
         vkCmdBeginRendering(cmd, &render_info);
 
         VkViewport viewport = {};
@@ -1197,6 +1400,58 @@ namespace gvk {
         init_triangle_pipeline();
         init_mesh_pipeline();
     }
+
+    void init_descriptors() {
+        // descriptor pool of 10 sets with 1 image each
+        vector<DescriptorAllocator::PoolSizeRatio> sizes = {
+            {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1}
+        };
+
+        global_descriptor_allocator.init_pool(_vk_device, 10, sizes);
+
+        // descriptor set layout for compute draw
+        {
+            DescriptorLayoutBuilder builder;
+            builder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+            _draw_image_descriptor_layout = builder.build(_vk_device, VK_SHADER_STAGE_COMPUTE_BIT);
+        }
+
+        {
+            DescriptorLayoutBuilder builder;
+            builder.add_binding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+            _gpu_scene_data_descriptor_layout = builder.build(_vk_device, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+        }
+
+        _draw_image_descriptors = global_descriptor_allocator.allocate(_vk_device, _draw_image_descriptor_layout);
+        DescriptorWriter writer;
+        writer.write_image(0, _draw_image.image_view, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+
+        writer.update_set(_vk_device, _draw_image_descriptors);
+
+        _main_deletion_queue.push_function([&]() {
+           global_descriptor_allocator.destroy_pool(_vk_device);
+
+            vkDestroyDescriptorSetLayout(_vk_device, _draw_image_descriptor_layout, nullptr);
+        });
+
+        for (int i = 0; i < FRAME_OVERLAP; i++) {
+            std::vector<DescriptorAllocatorGrowable::PoolSizeRatio> frame_sizes = {
+                { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3 },
+                { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 },
+                { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3 },
+                { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4 },
+            };
+
+            _frames[i]._frame_descriptors = DescriptorAllocatorGrowable{};
+            _frames[i]._frame_descriptors.init(_vk_device, 1000, frame_sizes);
+
+            _main_deletion_queue.push_function([&, i]() {
+                _frames[i]._frame_descriptors.destroy_pools(_vk_device);
+            });
+        }
+
+    }
+
 
     optional<vector<shared_ptr<MeshAsset>>> load_gltf_meshes(filesystem::path path)
     {
@@ -1406,6 +1661,7 @@ namespace gvk {
     void draw() {
         VK_CHECK(vkWaitForFences(_vk_device, 1, &get_current_frame()._render_fence, true, 1000000000));
         get_current_frame()._deletion_queue.flush();
+        get_current_frame()._frame_descriptors.clear_pools(_vk_device);
         VK_CHECK(vkResetFences(_vk_device, 1, &get_current_frame()._render_fence));
 
         uint32_t swapchain_image_index;
