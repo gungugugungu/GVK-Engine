@@ -8,6 +8,7 @@
 int main() {
     gvk::init();
 
+    vector<shared_ptr<MeshAsset>> test_meshes = gvk::load_gltf_meshes("../test_monkey.glb").value();
     AllocatedImage custom_texture = gvk::load_image("../custom.jpg").value();
 
     bool running = true;
@@ -23,8 +24,10 @@ int main() {
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
-        ImGui::ShowDemoWindow();
+        //ImGui::ShowDemoWindow();
         ImGui::Render();
+
+        gvk::draw_mesh(test_meshes[2], custom_texture, {0.f, 0.f, 0.f}, {1.f, 1.f, 1.f}, glm::quat(glm::vec3(0.f, 0.f, 0.f)));
 
         gvk::draw();
     }

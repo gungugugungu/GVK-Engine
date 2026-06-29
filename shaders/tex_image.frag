@@ -9,5 +9,5 @@ layout(set =0, binding = 0) uniform sampler2D display_texture;
 
 void main()
 {
-    frag_color = texture(display_texture,uv);
+    frag_color = texture(display_texture, uv);
 }

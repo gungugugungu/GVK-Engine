@@ -650,6 +650,7 @@ struct GPUMeshBuffers {
 struct GPUDrawPushConstants {
     glm::mat4 world_matrix;
     VkDeviceAddress vertex_buffer;
+    VkDeviceAddress index_buffer;
 };
 
 struct GeoSurface {
@@ -842,6 +843,14 @@ struct DescriptorWriter {
     }
 };
 
+struct RenderQueueMesh {
+    shared_ptr<MeshAsset> mesh;
+    AllocatedImage image;
+    glm::vec3 position;
+    glm::vec3 scale;
+    glm::quat rotation;
+};
+
 namespace gvk {
     void init();
     void quit();
@@ -908,20 +917,21 @@ namespace gvk {
     inline VkPipelineLayout _mesh_pipeline_layout;
     inline VkPipeline _mesh_pipeline;
 
-    GPUSceneData scene_data;
-    VkDescriptorSetLayout _gpu_scene_data_descriptor_layout;
+    inline GPUSceneData scene_data;
+    inline VkDescriptorSetLayout _gpu_scene_data_descriptor_layout;
 
-    // mesh loading testing stuffity stuff TODO: remove
-    inline vector<shared_ptr<MeshAsset>> test_meshes;
-    AllocatedImage _white_image;
-    AllocatedImage _black_image;
-    AllocatedImage _gray_image;
-    AllocatedImage _error_checkerboard_image;
+    // you know what these can stay, they'll come in handy
+    inline AllocatedImage _white_image;
+    inline AllocatedImage _black_image;
+    inline AllocatedImage _gray_image;
+    inline AllocatedImage _error_checkerboard_image;
 
-    VkSampler _default_sampler_linear;
-    VkSampler _default_sampler_nearest;
+    inline VkSampler _default_sampler_linear;
+    inline VkSampler _default_sampler_nearest;
 
-    VkDescriptorSetLayout _single_image_descriptor_layout;
+    inline VkDescriptorSetLayout _single_image_descriptor_layout;
+
+    inline vector<RenderQueueMesh> render_queue;
 
     void immediate_submit(function<void(VkCommandBuffer cmd)>&& function) {
         VK_CHECK(vkResetFences(_vk_device, 1, &_imm_fence));
@@ -1317,43 +1327,6 @@ namespace gvk {
         });
     }
 
-    void init_triangle_pipeline() {
-        VkShaderModule triangle_frag_shader;
-        if (!load_shader_module("../shaders/colored_triangle.frag.spv", _vk_device, &triangle_frag_shader)) {
-            fmt::println("Error when building the triangle fragment shader");
-        }
-
-        VkShaderModule triangle_vert_shader;
-        if (!load_shader_module("../shaders/colored_triangle.vert.spv", _vk_device, &triangle_vert_shader)) {
-            fmt::println("Error when building the triangle vertex shader");
-        }
-
-        VkPipelineLayoutCreateInfo layout_info = pipeline_layout_create_info();
-        VK_CHECK(vkCreatePipelineLayout(_vk_device, &layout_info, nullptr, &_triangle_pipeline_layout));
-
-        PipelineBuilder builder;
-        builder._pipeline_layout = _triangle_pipeline_layout;
-        builder.set_shaders(triangle_vert_shader, triangle_frag_shader);
-        builder.set_input_topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
-        builder.set_polygon_mode(VK_POLYGON_MODE_FILL);
-        builder.set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_CLOCKWISE);
-        builder.set_multisampling_none();
-        builder.disable_blending();
-        builder.disable_depthtest();
-        builder.set_color_attachment_format(_draw_image.format);
-        builder.set_depth_format(VK_FORMAT_UNDEFINED);
-
-        _triangle_pipeline = builder.build_pipeline(_vk_device);
-
-        vkDestroyShaderModule(_vk_device, triangle_frag_shader, nullptr);
-        vkDestroyShaderModule(_vk_device, triangle_vert_shader, nullptr);
-
-        _main_deletion_queue.push_function([&]() {
-            vkDestroyPipelineLayout(_vk_device, _triangle_pipeline_layout, nullptr);
-            vkDestroyPipeline(_vk_device, _triangle_pipeline, nullptr);
-        });
-    }
-
     void init_default_data() {
         uint32_t white = glm::packUnorm4x8(glm::vec4(1, 1, 1, 1));
         _white_image = create_image((void*)&white, VkExtent3D{ 1, 1, 1 }, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT);
@@ -1451,6 +1424,16 @@ namespace gvk {
         });
     }
 
+    void draw_mesh(shared_ptr<MeshAsset> mesh, AllocatedImage texture, glm::vec3 position, glm::vec3 scale, glm::quat rotation) {
+        render_queue.push_back(RenderQueueMesh{
+            .mesh = mesh,
+            .image = texture,
+            .position = position,
+            .scale = scale,
+            .rotation = rotation
+        });
+    }
+
     void draw_geometry(VkCommandBuffer cmd) {
         VkRenderingAttachmentInfo color_attachment = attachment_info(_draw_image.image_view, nullptr, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         VkRenderingAttachmentInfo depth_attachment = depth_attachment_info(_depth_image.image_view, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
@@ -1489,37 +1472,37 @@ namespace gvk {
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _mesh_pipeline);
 
-        VkDescriptorSet imageSet = get_current_frame()._frame_descriptors.allocate(_vk_device, _single_image_descriptor_layout);
-        {
-            DescriptorWriter writer;
-            writer.write_image(0, _error_checkerboard_image.image_view, _default_sampler_nearest, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-
-            writer.update_set(_vk_device, imageSet);
-        }
-
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _mesh_pipeline_layout, 0, 1, &imageSet, 0, nullptr);
-
         GPUDrawPushConstants push_constants;
         glm::mat4 view = glm::translate(glm::mat4(1.f), glm::vec3{ 0, 0, -5 });
         glm::mat4 projection = glm::perspective(glm::radians(70.f), static_cast<float>(_draw_extent.width) / static_cast<float>(_draw_extent.height), 10000.f, 0.1f);
-
         projection[1][1] *= -1;
-
         push_constants.world_matrix = projection * view;
-        push_constants.vertex_buffer = test_meshes[2]->mesh_buffers.vertex_buffer_address;
 
-        vkCmdPushConstants(cmd, _mesh_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(GPUDrawPushConstants), &push_constants);
-        vkCmdBindIndexBuffer(cmd, test_meshes[2]->mesh_buffers.index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+        for (RenderQueueMesh m : render_queue) {
+            VkDescriptorSet imageSet = get_current_frame()._frame_descriptors.allocate(_vk_device, _single_image_descriptor_layout);
+            {
+                DescriptorWriter writer;
+                writer.write_image(0, m.image.image_view, _default_sampler_nearest, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 
-        vkCmdDrawIndexed(cmd, test_meshes[2]->surfaces[0].count, 1, test_meshes[2]->surfaces[0].start_index, 0, 0);
+                writer.update_set(_vk_device, imageSet);
+            }
 
-        vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _mesh_pipeline_layout, 0, 1, &imageSet, 0, nullptr);
+
+            push_constants.vertex_buffer = m.mesh->mesh_buffers.vertex_buffer_address;
+
+            vkCmdPushConstants(cmd, _mesh_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(GPUDrawPushConstants), &push_constants);
+            vkCmdBindIndexBuffer(cmd, m.mesh->mesh_buffers.index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+
+            vkCmdDrawIndexed(cmd, m.mesh->surfaces[0].count, 1, m.mesh->surfaces[0].start_index, 0, 0);
+
+            vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
+        }
 
         vkCmdEndRendering(cmd);
     }
 
     void init_pipelines() {
-        init_triangle_pipeline();
         init_mesh_pipeline();
     }
 
@@ -1793,9 +1776,6 @@ namespace gvk {
         init_pipelines();
         init_default_data();
         init_imgui();
-
-        // TODO: remove test monkey
-        test_meshes = load_gltf_meshes("../test_monkey.glb").value();
     }
 
     void draw() {
@@ -1820,6 +1800,8 @@ namespace gvk {
         transition_image(cmd, _depth_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
 
         draw_geometry(cmd);
+
+        render_queue.clear();
 
         // blit to swapchain
         transition_image(cmd, _draw_image.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
@@ -1872,11 +1854,6 @@ namespace gvk {
             vkDestroyFence(_vk_device, _frames[i]._render_fence, nullptr);
             vkDestroySemaphore(_vk_device, _frames[i]._render_semaphore, nullptr);
             vkDestroySemaphore(_vk_device, _frames[i]._swapchain_semaphore, nullptr);
-        }
-
-        for (auto& mesh: test_meshes) {
-            destroy_buffer(mesh->mesh_buffers.index_buffer);
-            destroy_buffer(mesh->mesh_buffers.vertex_buffer);
         }
 
         _main_deletion_queue.flush();
