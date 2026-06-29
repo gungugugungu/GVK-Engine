@@ -1201,7 +1201,6 @@ namespace gvk {
 
             vkDestroyImageView(_vk_device, _depth_image.image_view, nullptr);
             vmaDestroyImage(_allocator, _depth_image.image, _depth_image.allocation);
-            vmaDestroyImage(_allocator, _depth_image.image, _depth_image.allocation);
         });
     }
 
@@ -1321,7 +1320,7 @@ namespace gvk {
         pipelineBuilder.set_polygon_mode(VK_POLYGON_MODE_FILL);
         pipelineBuilder.set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_CLOCKWISE);
         pipelineBuilder.set_multisampling_none();
-        pipelineBuilder.enable_blending_additive();
+        pipelineBuilder.disable_blending(); // TODO: enable when you fixed it
 
         pipelineBuilder.enable_depthtest(true, VK_COMPARE_OP_GREATER_OR_EQUAL);
 
@@ -1650,6 +1649,7 @@ namespace gvk {
         init_swapchain();
         init_commands();
         init_sync_structures();
+        init_descriptors();
         init_pipelines();
         init_default_data();
         init_imgui();
