@@ -8,6 +8,8 @@
 int main() {
     gvk::init();
 
+    AllocatedImage custom_texture = gvk::load_image("../custom.jpg").value();
+
     bool running = true;
     while (running) {
         SDL_Event e;
