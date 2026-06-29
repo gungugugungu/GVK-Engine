@@ -1,5 +1,6 @@
 #pragma once
 #define VMA_IMPLEMENTATION
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <memory>
 #include <optional>
 #include <string>
@@ -575,7 +576,34 @@ struct PipelineBuilder {
         _depth_stencil.minDepthBounds = 0.f;
         _depth_stencil.maxDepthBounds = 1.f;
     }
+
+    void enable_depthtest(bool depth_write_enable, VkCompareOp op)
+    {
+        _depth_stencil.depthTestEnable = VK_TRUE;
+        _depth_stencil.depthWriteEnable = depth_write_enable;
+        _depth_stencil.depthCompareOp = op;
+        _depth_stencil.depthBoundsTestEnable = VK_FALSE;
+        _depth_stencil.stencilTestEnable = VK_FALSE;
+        _depth_stencil.front = {};
+        _depth_stencil.back = {};
+        _depth_stencil.minDepthBounds = 0.f;
+        _depth_stencil.maxDepthBounds = 1.f;
+    }
 };
+
+VkRenderingAttachmentInfo depth_attachment_info(VkImageView view, VkImageLayout layout /*= VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL*/) {
+    VkRenderingAttachmentInfo depth_attachment {};
+    depth_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    depth_attachment.pNext = nullptr;
+
+    depth_attachment.imageView = view;
+    depth_attachment.imageLayout = layout;
+    depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    depth_attachment.clearValue.depthStencil.depth = 0.f;
+
+    return depth_attachment;
+}
 
 struct AllocatedBuffer {
     VkBuffer buffer;
@@ -659,22 +687,23 @@ namespace gvk {
 
     // draw resources
     inline AllocatedImage _draw_image;
+    inline AllocatedImage _depth_image;
     inline VkExtent2D _draw_extent;
 
     // triangle pipeline
-    VkPipeline _triangle_pipeline;
-    VkPipelineLayout _triangle_pipeline_layout;
+    inline VkPipeline _triangle_pipeline;
+    inline VkPipelineLayout _triangle_pipeline_layout;
 
     // imgui resources
-    VkFence _imm_fence;
-    VkCommandBuffer _imm_command_buffer;
-    VkCommandPool _imm_command_pool;
+    inline VkFence _imm_fence;
+    inline VkCommandBuffer _imm_command_buffer;
+    inline VkCommandPool _imm_command_pool;
 
-    VkPipelineLayout _mesh_pipeline_layout;
-    VkPipeline _mesh_pipeline;
+    inline VkPipelineLayout _mesh_pipeline_layout;
+    inline VkPipeline _mesh_pipeline;
 
     // mesh loading testing stuffity stuff TODO: remove
-    vector<shared_ptr<MeshAsset>> test_meshes;
+    inline vector<shared_ptr<MeshAsset>> test_meshes;
 
     void immediate_submit(function<void(VkCommandBuffer cmd)>&& function) {
         VK_CHECK(vkResetFences(_vk_device, 1, &_imm_fence));
@@ -944,7 +973,27 @@ namespace gvk {
 
         VK_CHECK(vkCreateImageView(_vk_device, &rview_info, nullptr, &_draw_image.image_view));
 
-        _main_deletion_queue.push_function([=]() { vkDestroyImageView(_vk_device, _draw_image.image_view, nullptr); vmaDestroyImage(_allocator, _draw_image.image, _draw_image.allocation); });
+        _depth_image.format = VK_FORMAT_D32_SFLOAT;
+        _depth_image.extent = draw_image_extent;
+        VkImageUsageFlags depthImageUsages{};
+        depthImageUsages |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+
+        VkImageCreateInfo dimg_info = image_create_info(_depth_image.format, depthImageUsages, draw_image_extent);
+
+        vmaCreateImage(_allocator, &dimg_info, &rimg_allocinfo, &_depth_image.image, &_depth_image.allocation, nullptr);
+
+        VkImageViewCreateInfo dview_info = imageview_create_info(_depth_image.format, _depth_image.image, VK_IMAGE_ASPECT_DEPTH_BIT);
+
+        VK_CHECK(vkCreateImageView(_vk_device, &dview_info, nullptr, &_depth_image.image_view));
+
+        _main_deletion_queue.push_function([=]() {
+            vkDestroyImageView(_vk_device, _draw_image.image_view, nullptr);
+            vmaDestroyImage(_allocator, _draw_image.image, _draw_image.allocation);
+
+            vkDestroyImageView(_vk_device, _depth_image.image_view, nullptr);
+            vmaDestroyImage(_allocator, _depth_image.image, _depth_image.allocation);
+            vmaDestroyImage(_allocator, _depth_image.image, _depth_image.allocation);
+        });
     }
 
     void init_commands() {
@@ -1065,10 +1114,10 @@ namespace gvk {
         pipelineBuilder.set_multisampling_none();
         pipelineBuilder.disable_blending();
 
-        pipelineBuilder.disable_depthtest();
+        pipelineBuilder.enable_depthtest(true, VK_COMPARE_OP_GREATER_OR_EQUAL);
 
         pipelineBuilder.set_color_attachment_format(_draw_image.format);
-        pipelineBuilder.set_depth_format(VK_FORMAT_UNDEFINED);
+        pipelineBuilder.set_depth_format(_depth_image.format);
 
         _mesh_pipeline = pipelineBuilder.build_pipeline(_vk_device);
 
@@ -1083,7 +1132,8 @@ namespace gvk {
 
     void draw_geometry(VkCommandBuffer cmd) {
         VkRenderingAttachmentInfo color_attachment = attachment_info(_draw_image.image_view, nullptr, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-        VkRenderingInfo render_info = rendering_info(_draw_extent, &color_attachment, nullptr);
+        VkRenderingAttachmentInfo depth_attachment = depth_attachment_info(_depth_image.image_view, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+        VkRenderingInfo render_info = rendering_info(_draw_extent, &color_attachment, &depth_attachment);
         vkCmdBeginRendering(cmd, &render_info);
 
         VkViewport viewport = {};
@@ -1103,7 +1153,12 @@ namespace gvk {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _mesh_pipeline);
 
         GPUDrawPushConstants push_constants;
-        push_constants.world_matrix = glm::mat4{ 1.f };
+        glm::mat4 view = glm::translate(glm::mat4(1.f), glm::vec3{ 0, 0, -5 });
+        glm::mat4 projection = glm::perspective(glm::radians(70.f), static_cast<float>(_draw_extent.width) / static_cast<float>(_draw_extent.height), 10000.f, 0.1f);
+
+        projection[1][1] *= -1;
+
+        push_constants.world_matrix = projection * view;
         push_constants.vertex_buffer = test_meshes[2]->mesh_buffers.vertex_buffer_address;
 
         vkCmdPushConstants(cmd, _mesh_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(GPUDrawPushConstants), &push_constants);
@@ -1344,6 +1399,7 @@ namespace gvk {
 
         // transition directly to color attachment for geometry
         transition_image(cmd, _draw_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        transition_image(cmd, _depth_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
 
         draw_geometry(cmd);
 
@@ -1398,6 +1454,11 @@ namespace gvk {
             vkDestroyFence(_vk_device, _frames[i]._render_fence, nullptr);
             vkDestroySemaphore(_vk_device, _frames[i]._render_semaphore, nullptr);
             vkDestroySemaphore(_vk_device, _frames[i]._swapchain_semaphore, nullptr);
+        }
+
+        for (auto& mesh: test_meshes) {
+            destroy_buffer(mesh->mesh_buffers.index_buffer);
+            destroy_buffer(mesh->mesh_buffers.vertex_buffer);
         }
 
         _main_deletion_queue.flush();

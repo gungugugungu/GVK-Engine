@@ -3,10 +3,12 @@
   <component name="VcsDirectoryMappings">
     <mapping directory="" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/include/SDL" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/include/fastgltf" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/include/fmt" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/include/glm" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/include/imgui" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/include/stb" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/include/tinygltf" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/include/vk-bootstrap" vcs="Git" />
   </component>
 </project>
