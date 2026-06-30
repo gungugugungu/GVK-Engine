@@ -18,6 +18,14 @@ int main() {
             if (e.type == SDL_EVENT_QUIT) {
                 running = false;
             }
+            if (e.type == SDL_EVENT_KEY_DOWN) {
+                if (e.key.key == SDLK_S) {
+                    gvk::camera.position.z -= 0.1f;
+                }
+                if (e.key.key == SDLK_W) {
+                    gvk::camera.position.z += 0.1f;
+                }
+            }
 
             ImGui_ImplSDL3_ProcessEvent(&e);
         }
@@ -27,7 +35,7 @@ int main() {
         //ImGui::ShowDemoWindow();
         ImGui::Render();
 
-        gvk::draw_mesh(test_meshes[2], custom_texture, {0.f, 0.f, 0.f}, {1.f, 1.f, 1.f}, glm::quat(glm::vec3(0.f, 0.f, 0.f)));
+        gvk::draw_mesh(test_meshes[2], custom_texture, {0.f, 0.f, 0.f}, {1, 1, 1}, glm::quat(1, 0, 0, 0));
 
         gvk::draw();
     }

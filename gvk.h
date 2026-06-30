@@ -933,6 +933,11 @@ namespace gvk {
 
     inline vector<RenderQueueMesh> render_queue;
 
+    struct {
+        glm::vec3 position;
+        glm::vec3 direction;
+    } camera;
+
     void immediate_submit(function<void(VkCommandBuffer cmd)>&& function) {
         VK_CHECK(vkResetFences(_vk_device, 1, &_imm_fence));
         VK_CHECK(vkResetCommandBuffer(_imm_command_buffer, 0));
@@ -1424,7 +1429,7 @@ namespace gvk {
         });
     }
 
-    void draw_mesh(shared_ptr<MeshAsset> mesh, AllocatedImage texture, glm::vec3 position, glm::vec3 scale, glm::quat rotation) {
+    void draw_mesh(shared_ptr<MeshAsset> mesh, AllocatedImage texture = _error_checkerboard_image, glm::vec3 position = {0, 0, 0}, glm::vec3 scale = {1, 1, 1}, glm::quat rotation = {1, 0, 0, 0}) {
         render_queue.push_back(RenderQueueMesh{
             .mesh = mesh,
             .image = texture,
@@ -1432,6 +1437,10 @@ namespace gvk {
             .scale = scale,
             .rotation = rotation
         });
+    }
+
+    void draw_mesh(RenderQueueMesh render_queue_mesh) {
+        render_queue.push_back(render_queue_mesh);
     }
 
     void draw_geometry(VkCommandBuffer cmd) {
@@ -1473,12 +1482,19 @@ namespace gvk {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _mesh_pipeline);
 
         GPUDrawPushConstants push_constants;
-        glm::mat4 view = glm::translate(glm::mat4(1.f), glm::vec3{ 0, 0, -5 });
         glm::mat4 projection = glm::perspective(glm::radians(70.f), static_cast<float>(_draw_extent.width) / static_cast<float>(_draw_extent.height), 10000.f, 0.1f);
         projection[1][1] *= -1;
-        push_constants.world_matrix = projection * view;
+
+        /* TODO: add proper transformations ---- comment from the future: this shit does not work
+         * TODO: make textures map properly like wth */
+
+        glm::mat4 view = glm::lookAt(camera.position, camera.position + camera.direction, glm::vec3{ 0.f, 1.f, 0.f });
 
         for (RenderQueueMesh m : render_queue) {
+            glm::mat4 model = glm::translate(glm::mat4(1.f), m.position) * glm::mat4_cast(m.rotation) * glm::scale(glm::mat4(1.f), m.scale);
+
+            push_constants.world_matrix = projection * view * model;
+
             VkDescriptorSet imageSet = get_current_frame()._frame_descriptors.allocate(_vk_device, _single_image_descriptor_layout);
             {
                 DescriptorWriter writer;
@@ -1495,8 +1511,6 @@ namespace gvk {
             vkCmdBindIndexBuffer(cmd, m.mesh->mesh_buffers.index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 
             vkCmdDrawIndexed(cmd, m.mesh->surfaces[0].count, 1, m.mesh->surfaces[0].start_index, 0, 0);
-
-            vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
         }
 
         vkCmdEndRendering(cmd);
