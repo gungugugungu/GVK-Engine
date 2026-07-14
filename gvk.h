@@ -636,8 +636,8 @@ struct AllocatedBuffer {
 struct Vertex {
     glm::vec3 position;
     float uv_x;
-    float uv_y;
     glm::vec3 normal;
+    float uv_y;
     glm::vec4 color;
 };
 
@@ -933,9 +933,12 @@ namespace gvk {
 
     inline vector<RenderQueueMesh> render_queue;
 
+    inline glm::vec4 clear_color = {0.f, 0.f, 0.f, 1.f};
+    inline float fov = 90.f;
+
     struct {
-        glm::vec3 position;
-        glm::vec3 direction;
+        glm::vec3 position  = {0.f, 0.f, -5.f};
+        glm::vec3 direction = {0.f, 0.f,  1.f};
     } camera;
 
     void immediate_submit(function<void(VkCommandBuffer cmd)>&& function) {
@@ -1444,7 +1447,8 @@ namespace gvk {
     }
 
     void draw_geometry(VkCommandBuffer cmd) {
-        VkRenderingAttachmentInfo color_attachment = attachment_info(_draw_image.image_view, nullptr, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        VkClearValue clear = { .color = { {clear_color.r, clear_color.g, clear_color.b, clear_color.a} } };
+        VkRenderingAttachmentInfo color_attachment = attachment_info(_draw_image.image_view, &clear, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         VkRenderingAttachmentInfo depth_attachment = depth_attachment_info(_depth_image.image_view, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
         VkRenderingInfo render_info = rendering_info(_draw_extent, &color_attachment, &depth_attachment);
 
@@ -1482,23 +1486,20 @@ namespace gvk {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _mesh_pipeline);
 
         GPUDrawPushConstants push_constants;
-        glm::mat4 projection = glm::perspective(glm::radians(70.f), static_cast<float>(_draw_extent.width) / static_cast<float>(_draw_extent.height), 10000.f, 0.1f);
+        glm::mat4 projection = glm::perspective(glm::radians(fov), static_cast<float>(_draw_extent.width) / static_cast<float>(_draw_extent.height), 10000.f, 0.1f);
         projection[1][1] *= -1;
-
-        /* TODO: add proper transformations ---- comment from the future: this shit does not work
-         * TODO: make textures map properly like wth */
 
         glm::mat4 view = glm::lookAt(camera.position, camera.position + camera.direction, glm::vec3{ 0.f, 1.f, 0.f });
 
         for (RenderQueueMesh m : render_queue) {
-            glm::mat4 model = glm::translate(glm::mat4(1.f), m.position) * glm::mat4_cast(m.rotation) * glm::scale(glm::mat4(1.f), m.scale);
+            glm::mat4 model = glm::translate(glm::mat4(1.f), m.position) * (glm::mat4_cast(m.rotation) * glm::scale(glm::mat4(1.f), m.scale));
 
             push_constants.world_matrix = projection * view * model;
 
             VkDescriptorSet imageSet = get_current_frame()._frame_descriptors.allocate(_vk_device, _single_image_descriptor_layout);
             {
                 DescriptorWriter writer;
-                writer.write_image(0, m.image.image_view, _default_sampler_nearest, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+                writer.write_image(0, m.image.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 
                 writer.update_set(_vk_device, imageSet);
             }

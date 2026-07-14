@@ -9,26 +9,68 @@ int main() {
     gvk::init();
 
     vector<shared_ptr<MeshAsset>> test_meshes = gvk::load_gltf_meshes("../test_monkey.glb").value();
-    AllocatedImage custom_texture = gvk::load_image("../custom.jpg").value();
+    AllocatedImage custom_texture = gvk::load_image("../custom.png").value();
+
+    gvk::clear_color = {0.05f, 0.05f, 0.05f, 1.f};
+
+    float yaw = 90.f;
+    float pitch = 0.f;
+    const float sensitivity = 0.1f;
+    const float speed = 5.f;
+    bool mouse_captured = false;
+
+    Uint64 last_time = SDL_GetTicks();
 
     bool running = true;
     while (running) {
+        Uint64 now = SDL_GetTicks();
+        float dt = (float)(now - last_time) / 1000.f;
+        last_time = now;
+
         SDL_Event e;
-        while (SDL_PollEvent(&e) != 0) {
+        while (SDL_PollEvent(&e)) {
+            ImGui_ImplSDL3_ProcessEvent(&e);
+
             if (e.type == SDL_EVENT_QUIT) {
                 running = false;
             }
-            if (e.type == SDL_EVENT_KEY_DOWN) {
-                if (e.key.key == SDLK_S) {
-                    gvk::camera.position.z -= 0.1f;
-                }
-                if (e.key.key == SDLK_W) {
-                    gvk::camera.position.z += 0.1f;
+
+            if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+                if (e.button.button == SDL_BUTTON_LEFT && !mouse_captured) {
+                    mouse_captured = true;
+                    SDL_SetWindowRelativeMouseMode(gvk::window, true);
                 }
             }
+            if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE) {
+                mouse_captured = false;
+                SDL_SetWindowRelativeMouseMode(gvk::window, false);
+            }
 
-            ImGui_ImplSDL3_ProcessEvent(&e);
+            if (e.type == SDL_EVENT_MOUSE_MOTION && mouse_captured) {
+                yaw += e.motion.xrel * sensitivity;
+                pitch -= e.motion.yrel * sensitivity;
+                pitch = glm::clamp(pitch, -89.f, 89.f);
+            }
         }
+
+        glm::vec3 dir;
+        dir.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
+        dir.y = sin(glm::radians(pitch));
+        dir.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
+        gvk::camera.direction = glm::normalize(dir);
+
+        glm::vec3 forward = gvk::camera.direction;
+        glm::vec3 right = glm::normalize(glm::cross(forward, glm::vec3{0.f, 1.f, 0.f}));
+        glm::vec3 up = glm::vec3{0.f, 1.f, 0.f};
+
+        auto* keys = SDL_GetKeyboardState(nullptr);
+        if (keys[SDL_SCANCODE_W]) gvk::camera.position += forward * speed * dt;
+        if (keys[SDL_SCANCODE_S]) gvk::camera.position -= forward * speed * dt;
+        if (keys[SDL_SCANCODE_A]) gvk::camera.position -= right * speed * dt;
+        if (keys[SDL_SCANCODE_D]) gvk::camera.position += right * speed * dt;
+        if (keys[SDL_SCANCODE_SPACE]) gvk::camera.position += up * speed * dt;
+        if (keys[SDL_SCANCODE_LCTRL]) gvk::camera.position -= up * speed * dt;
+
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
@@ -41,5 +83,5 @@ int main() {
     }
 
     gvk::quit();
-    return 1;
+    return 0;
 }
