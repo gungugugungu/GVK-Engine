@@ -77,7 +77,7 @@ int main() {
         //ImGui::ShowDemoWindow();
         ImGui::Render();
 
-        gvk::draw_mesh(test_meshes[2], custom_texture, {0.f, 0.f, 0.f}, {1, 1, 1}, glm::quat(1, 0, 0, 0));
+        gvk::draw_mesh(test_meshes[2], custom_texture, {0.f, 0.f, 0.f}, {1, 1, 1}, glm::quat(-2e-7, 0, 1, 0));
 
         gvk::draw();
     }
