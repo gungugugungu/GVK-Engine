@@ -128,6 +128,27 @@ void transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout old_layo
     vkCmdPipelineBarrier2(cmd, &dep_info);
 }
 
+void transition_image_mip(VkCommandBuffer cmd, VkImage image, VkImageLayout old_layout, VkImageLayout new_layout, uint32_t mip_level) {
+    VkImageMemoryBarrier2 barrier = {.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+    barrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    barrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+    barrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    barrier.dstAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT;
+    barrier.oldLayout = old_layout;
+    barrier.newLayout = new_layout;
+    barrier.image = image;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    barrier.subresourceRange.baseMipLevel = mip_level;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+
+    VkDependencyInfo dep = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+    dep.imageMemoryBarrierCount = 1;
+    dep.pImageMemoryBarriers    = &barrier;
+    vkCmdPipelineBarrier2(cmd, &dep);
+}
+
 VkSemaphoreSubmitInfo make_semaphore_submit_info(VkPipelineStageFlags2 stage_mask, VkSemaphore semaphore)
 {
     VkSemaphoreSubmitInfo submit_info{};
@@ -190,7 +211,7 @@ VkImageCreateInfo image_create_info(VkFormat format, VkImageUsageFlags usage_fla
     return info;
 }
 
-VkImageViewCreateInfo imageview_create_info(VkFormat format, VkImage image, VkImageAspectFlags aspectFlags) {
+VkImageViewCreateInfo imageview_create_info(VkFormat format, VkImage image, uint32_t mipmaps, VkImageAspectFlags aspectFlags) {
     VkImageViewCreateInfo info = {};
     info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     info.pNext = nullptr;
@@ -199,7 +220,7 @@ VkImageViewCreateInfo imageview_create_info(VkFormat format, VkImage image, VkIm
     info.image = image;
     info.format = format;
     info.subresourceRange.baseMipLevel = 0;
-    info.subresourceRange.levelCount = 1;
+    info.subresourceRange.levelCount = mipmaps;
     info.subresourceRange.baseArrayLayer = 0;
     info.subresourceRange.layerCount = 1;
     info.subresourceRange.aspectMask = aspectFlags;
@@ -264,6 +285,7 @@ struct AllocatedImage {
     VmaAllocation allocation;
     VkExtent3D extent;
     VkFormat format;
+    uint32_t mipmaps;
 };
 
 struct DescriptorLayoutBuilder {
@@ -984,12 +1006,13 @@ namespace gvk {
         vmaDestroyBuffer(_allocator, buffer.buffer, buffer.allocation);
     }
 
-    AllocatedImage create_image(VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false) {
+    AllocatedImage create_image(VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = true) {
         AllocatedImage new_image;
         new_image.format = format;
         new_image.extent = size;
+        new_image.mipmaps = static_cast<uint32_t>(floor(log2(max(size.width, size.height))))+1;
 
-        VkImageCreateInfo img_info = image_create_info(format, usage, size);
+        VkImageCreateInfo img_info = image_create_info(format, usage | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, size);
         if (mipmapped) {
             img_info.mipLevels = static_cast<uint32_t>(floor(log2(max(size.width, size.height))))+1;
         }
@@ -1005,7 +1028,7 @@ namespace gvk {
             aspectflag = VK_IMAGE_ASPECT_DEPTH_BIT;
         }
 
-        VkImageViewCreateInfo view_info = imageview_create_info(format, new_image.image, aspectflag);
+        VkImageViewCreateInfo view_info = imageview_create_info(format, new_image.image, new_image.mipmaps, aspectflag);
         view_info.subresourceRange.levelCount = img_info.mipLevels;
 
         VK_CHECK(vkCreateImageView(_vk_device, &view_info, nullptr, &new_image.image_view));
@@ -1013,13 +1036,15 @@ namespace gvk {
         return new_image;
     }
 
-    AllocatedImage create_image(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false) {
+    AllocatedImage create_image(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = true) {
         size_t data_size = size.depth * size.width * size.height * 4;
         AllocatedBuffer uploadbuffer = create_buffer(data_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 
         memcpy(uploadbuffer.info.pMappedData, data, data_size);
 
         AllocatedImage new_image = create_image(size, format, usage | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, mipmapped);
+
+        new_image.mipmaps = static_cast<uint32_t>(floor(log2(max(size.width, size.height))))+1;
 
         immediate_submit([&](VkCommandBuffer cmd) {
             transition_image(cmd, new_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
@@ -1037,7 +1062,49 @@ namespace gvk {
 
             vkCmdCopyBufferToImage(cmd, uploadbuffer.buffer, new_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_region);
 
-            transition_image(cmd, new_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            int32_t mip_width = static_cast<int32_t>(size.width);
+            int32_t mip_height = static_cast<int32_t>(size.height);
+
+            for (uint32_t mip = 1; mip < new_image.mipmaps; mip++) {
+                transition_image_mip(cmd, new_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, mip-1);
+
+                VkImageBlit2 blit = {.sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2};
+
+                blit.srcOffsets[0] = {0,0, 0};
+                blit.srcOffsets[1] = {mip_width, mip_height, 1};
+                blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                blit.srcSubresource.mipLevel = mip-1;
+                blit.srcSubresource.baseArrayLayer = 0;
+                blit.srcSubresource.layerCount = 1;
+
+                int32_t next_width = mip_width > 1 ? mip_width / 2 : 1;
+                int32_t next_height = mip_height > 1 ? mip_height / 2 : 1;
+
+                blit.dstOffsets[0] = {0,0 ,0};
+                blit.dstOffsets[1] = {next_width, next_height, 1};
+                blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                blit.dstSubresource.mipLevel = mip;
+                blit.dstSubresource.baseArrayLayer = 0;
+                blit.dstSubresource.layerCount = 1;
+
+                VkBlitImageInfo2 blit_info = {.sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2};
+                blit_info.srcImage = new_image.image;
+                blit_info.srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+                blit_info.dstImage = new_image.image;
+                blit_info.dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+                blit_info.filter = VK_FILTER_LINEAR;
+                blit_info.regionCount = 1;
+                blit_info.pRegions = &blit;
+
+                vkCmdBlitImage2(cmd, &blit_info);
+
+                transition_image_mip(cmd, new_image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, mip-1);
+
+                mip_width = next_width;
+                mip_height = next_height;
+            }
+
+            transition_image_mip(cmd, new_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, new_image.mipmaps - 1);
         });
 
         destroy_buffer(uploadbuffer);
@@ -1270,7 +1337,7 @@ namespace gvk {
         rimg_allocinfo.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
         vmaCreateImage(_allocator, &rimg_info, &rimg_allocinfo, &_draw_image.image, &_draw_image.allocation, nullptr);
-        VkImageViewCreateInfo rview_info = imageview_create_info(_draw_image.format, _draw_image.image, VK_IMAGE_ASPECT_COLOR_BIT);
+        VkImageViewCreateInfo rview_info = imageview_create_info(_draw_image.format, _draw_image.image, _draw_image.mipmaps, VK_IMAGE_ASPECT_COLOR_BIT);
 
         VK_CHECK(vkCreateImageView(_vk_device, &rview_info, nullptr, &_draw_image.image_view));
 
@@ -1283,7 +1350,7 @@ namespace gvk {
 
         vmaCreateImage(_allocator, &dimg_info, &rimg_allocinfo, &_depth_image.image, &_depth_image.allocation, nullptr);
 
-        VkImageViewCreateInfo dview_info = imageview_create_info(_depth_image.format, _depth_image.image, VK_IMAGE_ASPECT_DEPTH_BIT);
+        VkImageViewCreateInfo dview_info = imageview_create_info(_depth_image.format, _depth_image.image, _depth_image.mipmaps, VK_IMAGE_ASPECT_DEPTH_BIT);
 
         VK_CHECK(vkCreateImageView(_vk_device, &dview_info, nullptr, &_depth_image.image_view));
 
@@ -1358,11 +1425,14 @@ namespace gvk {
 
         sampl.magFilter = VK_FILTER_NEAREST;
         sampl.minFilter = VK_FILTER_NEAREST;
-
+        sampl.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        sampl.maxLod = VK_LOD_CLAMP_NONE;
         vkCreateSampler(_vk_device, &sampl, nullptr, &_default_sampler_nearest);
 
         sampl.magFilter = VK_FILTER_LINEAR;
         sampl.minFilter = VK_FILTER_LINEAR;
+        sampl.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        sampl.maxLod = VK_LOD_CLAMP_NONE;
         vkCreateSampler(_vk_device, &sampl, nullptr, &_default_sampler_linear);
 
         _main_deletion_queue.push_function([&](){
@@ -1539,12 +1609,18 @@ namespace gvk {
             builder.add_binding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
             _gpu_scene_data_descriptor_layout = builder.build(_vk_device, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
         }
+        _main_deletion_queue.push_function([&]() {
+            vkDestroyDescriptorSetLayout(_vk_device, _gpu_scene_data_descriptor_layout, nullptr);
+        });
 
         {
             DescriptorLayoutBuilder builder;
             builder.add_binding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
             _single_image_descriptor_layout = builder.build(_vk_device, VK_SHADER_STAGE_FRAGMENT_BIT);
         }
+        _main_deletion_queue.push_function([&]() {
+            vkDestroyDescriptorSetLayout(_vk_device, _single_image_descriptor_layout, nullptr);
+        });
 
         _draw_image_descriptors = global_descriptor_allocator.allocate(_vk_device, _draw_image_descriptor_layout);
         DescriptorWriter writer;

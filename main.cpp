@@ -7,7 +7,7 @@
 
 /*
 TODO FEATURES:
- - lighting
+ - 9. lighting
     - gpu scene data uniform buffer
     - ambient light
     - directional light
@@ -16,7 +16,7 @@ TODO FEATURES:
     - tangent generation in gltf loading
     - dynamic light count
     - proper api for handling lights
- - shadow mapping
+ - 10. shadow mapping
     - depth-only pipeline
     - shadow map image
     - light space matrix
@@ -24,7 +24,7 @@ TODO FEATURES:
     - shadow sampling in the main fragment shader
     - shadow bias
     - PCF filtering
- - material system
+ - 6. material system
     - material struct (albedo map, normal map, roughness map, emissive map, scalar tint and roughness and metallic factors)
     - material descriptor layout
     - default fallback textures
@@ -32,33 +32,29 @@ TODO FEATURES:
     - draw_mesh api update
     - emissive support in the shader
     - creating and destroying materials for user-made materials
- - mipmaps and proper sample management
-    - mipmap generation on upload
-    - mip count calculation
-    - sampler cache (so samplers are never duplicated)
- - instanced rendering
+ - 8. instanced rendering
     - per-instance storage buffer
     - draw_mesh_instanced api
     - write the shader for it (gl_InstanceIndex)
     - move to indirect drawing so the instance count can eventually come from gpu-side data
- - skybox
+ - 3. skybox
     - cubemap loading
     - skybox pipeline
     - skybox shader
     - set_skybox api
- - frustrum culling
+ - 2. frustrum culling
     - bounding sphere per mesh (compute in loading by finding the disctance from the centroid across all vectires)
     - frustrum plane extraction (gribb-hartmann)
     - cull loop
     - stats readout
- - post processing stack
+ - 7. post processing stack
     - fullscreen traingle pipeline
     - HDR tonemapping
     - guassian blur api
     - box blur api
     - bloom
     - vignette
- - 2D rendering
+ - 4. 2D rendering
     - quad mesh
     - 2D pipeline
     - surface class
@@ -66,7 +62,7 @@ TODO FEATURES:
     - draw_surface
     - draw_rect
     - font atlas rendering
- - MSAA
+ - 5. MSAA
     - multisample draw image
     - resolve attachment
     - configurable sample count
@@ -148,6 +144,12 @@ int main() {
 
         gvk::draw();
     }
+
+    for (auto& mesh : test_meshes) {
+        gvk::destroy_buffer(mesh->mesh_buffers.vertex_buffer);
+        gvk::destroy_buffer(mesh->mesh_buffers.index_buffer);
+    }
+    gvk::destroy_image(custom_texture);
 
     gvk::quit();
     return 0;
