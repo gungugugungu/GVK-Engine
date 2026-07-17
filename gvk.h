@@ -44,6 +44,45 @@ abort(); \
 
 using namespace std;
 
+// hard-coded cube for skybxo
+std::vector<uint32_t> skybox_indices {
+    //Top
+    2, 6, 7,
+    2, 3, 7,
+
+    //Bottom
+    0, 4, 5,
+    0, 1, 5,
+
+    //Left
+    0, 2, 6,
+    0, 4, 6,
+
+    //Right
+    1, 3, 7,
+    1, 5, 7,
+
+    //Front
+    0, 2, 3,
+    0, 1, 3,
+
+    //Back
+    4, 6, 7,
+    4, 5, 7
+};
+
+
+std::vector<float> skybox_vertices {
+    -1, -1,  0.5, //0
+     1, -1,  0.5, //1
+    -1,  1,  0.5, //2
+     1,  1,  0.5, //3
+    -1, -1, -0.5, //4
+     1, -1, -0.5, //5
+    -1,  1, -0.5, //6
+     1,  1, -0.5  //7
+};
+
 VkCommandPoolCreateInfo init_command_pool_create_info(uint32_t queueFamilyIndex,
     VkCommandPoolCreateFlags flags)
 {
@@ -662,8 +701,14 @@ struct Vertex {
     float uv_x;
     glm::vec3 normal;
     float uv_y;
-    glm::vec4 color;
 };
+
+void debug_print_vertex_data(Vertex vert) {
+    cout << "[GVK DEBUG] vertex data: " << endl;
+    cout << "                   position: " << vert.position.x << ", " << vert.position.y << ", " << vert.position.z << endl;
+    cout << "                   normal: " << vert.normal.x << ", " << vert.normal.y << ", " << vert.normal.z << endl;
+    cout << "                   uv: " << vert.uv_x << ", " << vert.uv_y << endl;
+}
 
 struct GPUMeshBuffers {
     AllocatedBuffer index_buffer;
@@ -974,6 +1019,19 @@ void extract_frustum_planes(const glm::mat4& matrix, Plane& left, Plane& right, 
     far = normalize_plane(farPlane);
 }
 
+struct CubeMap {
+    AllocatedImage image;
+    VkImageView image_view;
+    VkSampler sampler;
+};
+
+struct Skybox {
+    GPUMeshBuffers mesh_buffers;
+    CubeMap cubemap;
+    VkPipeline pip;
+    VkPipelineLayout piplayout;
+};
+
 namespace gvk {
     void init();
     void quit();
@@ -1059,12 +1117,15 @@ namespace gvk {
     inline glm::vec4 clear_color = {0.f, 0.f, 0.f, 1.f};
     inline float fov = 90.f;
 
+    // frustum culling planes
     inline Plane fc_top_plane;
     inline Plane fc_bottom_plane;
     inline Plane fc_left_plane;
     inline Plane fc_right_plane;
     inline Plane fc_far_plane;
     inline Plane fc_near_plane;
+
+    inline Skybox skybox;
 
     struct {
         glm::vec3 position  = {0.f, 0.f, -5.f};
@@ -1262,6 +1323,28 @@ namespace gvk {
         destroy_buffer(staging);
 
         return new_surface;
+    }
+
+    void init_skybox() {
+        vector<Vertex> skybox_vertices_as_proper_struct_because_im_lazy_to_hardcode_them;
+        for (int i = 0; i<(static_cast<int>(skybox_vertices.size())-2); i=i+3) {
+            Vertex temp_vert;
+            temp_vert.normal = {1.f, 1.f, 1.f};
+            temp_vert.position.x = skybox_vertices[i];
+            temp_vert.position.y = skybox_vertices[i+1];
+            temp_vert.position.z = skybox_vertices[i+2];
+            temp_vert.uv_x = 1.f;
+            temp_vert.uv_y = 1.f;
+
+            skybox_vertices_as_proper_struct_because_im_lazy_to_hardcode_them.push_back(temp_vert);
+        }
+
+        skybox.mesh_buffers = upload_mesh(skybox_indices, skybox_vertices_as_proper_struct_because_im_lazy_to_hardcode_them);
+
+        _main_deletion_queue.push_function([&]() {
+            destroy_buffer(skybox.mesh_buffers.vertex_buffer);
+            destroy_buffer(skybox.mesh_buffers.index_buffer);
+        });
     }
 
     void init_imgui() {
@@ -1556,16 +1639,16 @@ namespace gvk {
 
     void init_mesh_pipeline() {
         VkShaderModule triangleFragShader;
-        if (!load_shader_module("../shaders/tex_image.frag.spv", _vk_device, &triangleFragShader)) {
-            fmt::println("Error when building the mesh fragment shader");
+        if (!load_shader_module("../shaders/mesh_frag.frag.spv", _vk_device, &triangleFragShader)) {
+            fmt::println("error when building the mesh fragment shader");
         }
         else {
             fmt::println("mesh fragment shader succesfully loaded");
         }
 
         VkShaderModule triangleVertexShader;
-        if (!load_shader_module("../shaders/colored_triangle_mesh.vert.spv", _vk_device, &triangleVertexShader)) {
-            fmt::println("Error when building the mesh vertex shader module");
+        if (!load_shader_module("../shaders/mesh_vertex.vert.spv", _vk_device, &triangleVertexShader)) {
+            fmt::println("error when building the mesh vertex shader module");
         }
         else {
             fmt::println("mesh vertex shader succesfully loaded");
@@ -1696,8 +1779,6 @@ namespace gvk {
                 vkCmdBindIndexBuffer(cmd, m.mesh->mesh_buffers.index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 
                 vkCmdDrawIndexed(cmd, m.mesh->surfaces[0].count, 1, m.mesh->surfaces[0].start_index, 0, 0);
-            } else {
-                cout << "object is outside frustum omfg it works4" << endl;
             }
         }
 
@@ -1772,7 +1853,7 @@ namespace gvk {
         int width, height, channels;
         stbi_uc* data = stbi_load(path.string().c_str(), &width, &height, &channels, STBI_rgb_alpha);
         if (!data) {
-            fmt::println("Failed to load image at path: '{}'", path.string());
+            fmt::println("failed to load image at path: {}", path.string());
             return {};
         }
 
@@ -1785,20 +1866,18 @@ namespace gvk {
 
     optional<vector<shared_ptr<MeshAsset>>> load_gltf_meshes(filesystem::path path)
     {
-        fmt::println("Loading GLTF: {}", path.string());
+        fmt::println("loading GLTF: {}", path.string());
 
         tinygltf::TinyGLTF loader;
         tinygltf::Model model;
         string err, warn;
 
-        bool ok = (path.extension() == ".glb")
-            ? loader.LoadBinaryFromFile(&model, &err, &warn, path.string())
-            : loader.LoadASCIIFromFile (&model, &err, &warn, path.string());
+        bool ok = (path.extension() == ".glb") ? loader.LoadBinaryFromFile(&model, &err, &warn, path.string()) : loader.LoadASCIIFromFile (&model, &err, &warn, path.string());
 
         if (!warn.empty()) fmt::println("GLTF warning: {}", warn);
         if (!err.empty())  fmt::println("GLTF error: {}",   err);
         if (!ok) {
-            fmt::println("Failed to load GLTF: {}", path.string());
+            fmt::println("failed to load GLTF: {}", path.string());
             return {};
         }
 
@@ -1811,8 +1890,7 @@ namespace gvk {
         auto stride_of = [&](const tinygltf::Accessor& acc) -> size_t {
             const auto& bv = model.bufferViews[acc.bufferView];
             if (bv.byteStride != 0) return bv.byteStride;
-            return tinygltf::GetComponentSizeInBytes(acc.componentType)
-                 * tinygltf::GetNumComponentsInType(acc.type);
+            return tinygltf::GetComponentSizeInBytes(acc.componentType) * tinygltf::GetNumComponentsInType(acc.type);
         };
 
         vector<shared_ptr<MeshAsset>> meshes;
@@ -1828,32 +1906,25 @@ namespace gvk {
 
             for (const tinygltf::Primitive& prim : mesh.primitives) {
                 GeoSurface new_surface;
-                new_surface.start_index = (uint32_t)indices.size();
+                new_surface.start_index = static_cast<uint32_t>(indices.size());
                 const size_t initial_vtx = vertices.size();
 
-                // ---- INDEX BUFFER ----
+                // INDEX BUFFER
                 {
                     const tinygltf::Accessor& acc = model.accessors[prim.indices];
-                    new_surface.count = (uint32_t)acc.count;
+                    new_surface.count = static_cast<uint32_t>(acc.count);
                     indices.reserve(indices.size() + acc.count);
                     const uint8_t* idx_data = data_ptr(acc);
 
                     switch (acc.componentType) {
                         case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
-                            for (size_t i = 0; i < acc.count; i++)
-                                indices.push_back(idx_data[i] + (uint32_t)initial_vtx);
+                            for (size_t i = 0; i < acc.count; i++) indices.push_back(idx_data[i] + (uint32_t)initial_vtx);
                             break;
                         case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
-                            for (size_t i = 0; i < acc.count; i++)
-                                indices.push_back(
-                                    reinterpret_cast<const uint16_t*>(idx_data)[i]
-                                    + (uint32_t)initial_vtx);
+                            for (size_t i = 0; i < acc.count; i++) indices.push_back(reinterpret_cast<const uint16_t*>(idx_data)[i] + (uint32_t)initial_vtx);
                             break;
                         case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
-                            for (size_t i = 0; i < acc.count; i++)
-                                indices.push_back(
-                                    reinterpret_cast<const uint32_t*>(idx_data)[i]
-                                    + (uint32_t)initial_vtx);
+                            for (size_t i = 0; i < acc.count; i++) indices.push_back(reinterpret_cast<const uint32_t*>(idx_data)[i] + (uint32_t)initial_vtx);
                             break;
                         default:
                             fmt::println("GLTF: unsupported index component type {}", acc.componentType);
@@ -1861,7 +1932,7 @@ namespace gvk {
                     }
                 }
 
-                // ---- POSITION ----
+                // POSITION
                 {
                     auto it = prim.attributes.find("POSITION");
                     if (it == prim.attributes.end()) {
@@ -1876,89 +1947,40 @@ namespace gvk {
                     for (size_t i = 0; i < acc.count; i++) {
                         Vertex vtx{};
                         vtx.position = *reinterpret_cast<const glm::vec3*>(ptr + i * s);
-                        vtx.normal   = {1, 0, 0};
-                        vtx.color    = glm::vec4{1.f};
-                        vtx.uv_x     = 0;
-                        vtx.uv_y     = 0;
+                        vtx.normal = {1, 0, 0};
+                        vtx.uv_x = 0;
+                        vtx.uv_y = 0;
                         vertices[initial_vtx + i] = vtx;
                     }
                 }
 
-                // ---- NORMAL ----
+                // NORMAL
                 {
                     auto it = prim.attributes.find("NORMAL");
                     if (it != prim.attributes.end()) {
                         const tinygltf::Accessor& acc = model.accessors[it->second];
-                        const size_t s   = stride_of(acc);
+                        const size_t s = stride_of(acc);
                         const uint8_t* ptr = data_ptr(acc);
-                        for (size_t i = 0; i < acc.count; i++)
-                            vertices[initial_vtx + i].normal =
-                                *reinterpret_cast<const glm::vec3*>(ptr + i * s);
+                        for (size_t i = 0; i < acc.count; i++) vertices[initial_vtx + i].normal = *reinterpret_cast<const glm::vec3*>(ptr + i * s);
                     }
                 }
 
-                // ---- TEXCOORD_0 ---- (eh why not it'll come in handy later)
+                // TEXCOORD_0
                 {
                     auto it = prim.attributes.find("TEXCOORD_0");
                     if (it != prim.attributes.end()) {
                         const tinygltf::Accessor& acc = model.accessors[it->second];
-                        const size_t s   = stride_of(acc);
+                        const size_t s = stride_of(acc);
                         const uint8_t* ptr = data_ptr(acc);
                         for (size_t i = 0; i < acc.count; i++) {
-                            const glm::vec2 uv =
-                                *reinterpret_cast<const glm::vec2*>(ptr + i * s);
+                            const glm::vec2 uv = *reinterpret_cast<const glm::vec2*>(ptr + i * s);
                             vertices[initial_vtx + i].uv_x = uv.x;
                             vertices[initial_vtx + i].uv_y = uv.y;
                         }
                     }
                 }
 
-                // ---- COLOR_0 ----
-                {
-                    auto it = prim.attributes.find("COLOR_0");
-                    if (it != prim.attributes.end()) {
-                        const tinygltf::Accessor& acc = model.accessors[it->second];
-                        const size_t s   = stride_of(acc);
-                        const uint8_t* ptr = data_ptr(acc);
-                        const bool is_vec4 = (acc.type == TINYGLTF_TYPE_VEC4);
-
-                        for (size_t i = 0; i < acc.count; i++) {
-                            glm::vec4 col{1.f};
-                            const uint8_t* elem = ptr + i * s;
-
-                            if (acc.componentType == TINYGLTF_COMPONENT_TYPE_FLOAT) {
-                                const float* f = reinterpret_cast<const float*>(elem);
-                                col = is_vec4
-                                    ? glm::vec4(f[0], f[1], f[2], f[3])
-                                    : glm::vec4(f[0], f[1], f[2], 1.f);
-
-                            } else if (acc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE) {
-                                col = is_vec4
-                                    ? glm::vec4(elem[0]/255.f, elem[1]/255.f,
-                                                elem[2]/255.f, elem[3]/255.f)
-                                    : glm::vec4(elem[0]/255.f, elem[1]/255.f,
-                                                elem[2]/255.f, 1.f);
-
-                            } else if (acc.componentType == TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT) {
-                                const uint16_t* u = reinterpret_cast<const uint16_t*>(elem);
-                                col = is_vec4
-                                    ? glm::vec4(u[0]/65535.f, u[1]/65535.f,
-                                                u[2]/65535.f, u[3]/65535.f)
-                                    : glm::vec4(u[0]/65535.f, u[1]/65535.f,
-                                                u[2]/65535.f, 1.f);
-                            }
-                            vertices[initial_vtx + i].color = col;
-                        }
-                    }
-                }
-
                 new_mesh.surfaces.push_back(new_surface);
-            }
-
-            constexpr bool override_colors = true;
-            if (override_colors) {
-                for (Vertex& vtx : vertices)
-                    vtx.color = glm::vec4(vtx.normal, 1.f);
             }
 
             calculate_AABB(new_mesh.AABB_min, new_mesh.AABB_max, vertices);
@@ -1985,6 +2007,7 @@ namespace gvk {
         init_descriptors();
         init_pipelines();
         init_default_data();
+        init_skybox();
         init_imgui();
     }
 
