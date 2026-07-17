@@ -42,11 +42,6 @@ TODO FEATURES:
     - skybox pipeline
     - skybox shader
     - set_skybox api
- - 2. frustrum culling
-    - bounding sphere per mesh (compute in loading by finding the disctance from the centroid across all vectires)
-    - frustrum plane extraction (gribb-hartmann)
-    - cull loop
-    - stats readout
  - 7. post processing stack
     - fullscreen traingle pipeline
     - HDR tonemapping
@@ -140,7 +135,8 @@ int main() {
         //ImGui::ShowDemoWindow();
         ImGui::Render();
 
-        gvk::draw_mesh(test_meshes[2], custom_texture, {0.f, 0.f, 0.f}, {1, 1, 1}, glm::quat(-2e-7, 0, 1, 0));
+        gvk::draw_mesh(test_meshes[0], custom_texture, {-2.5f, 0.f, 0.f}, {1, 1, 1}, glm::quat(glm::vec3(0, 3.1416, 0)));
+        gvk::draw_mesh(test_meshes[1], gvk::_error_checkerboard_image, {2.5f, -1.f, 0.f}, {1, 1, 1}, glm::quat(glm::vec3(1.5708, 0, 0)));
 
         gvk::draw();
     }

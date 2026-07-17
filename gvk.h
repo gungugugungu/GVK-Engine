@@ -29,6 +29,8 @@
 #include <filesystem>
 #include <iostream>
 #include <glm/gtx/quaternion.hpp>
+
+#include "include/glm/glm/gtc/matrix_access.hpp"
 #include "include/tinygltf/tiny_gltf.h"
 
 #define VK_CHECK(x) \
@@ -685,6 +687,8 @@ struct MeshAsset {
 
     vector<GeoSurface> surfaces;
     GPUMeshBuffers mesh_buffers;
+    glm::vec3 AABB_min;
+    glm::vec3 AABB_max;
 };
 
 struct GPUSceneData {
@@ -873,6 +877,103 @@ struct RenderQueueMesh {
     glm::quat rotation;
 };
 
+struct Plane {
+    glm::vec3 normal;
+    float distance;
+};
+
+void calculate_AABB(glm::vec3& min, glm::vec3& max, vector<Vertex> vertices) {
+    for (Vertex vert : vertices) {
+        if (vert.position.x < min.x) min.x = vert.position.x;
+        if (vert.position.y < min.y) min.y = vert.position.y;
+        if (vert.position.z < min.z) min.z = vert.position.z;
+
+        if (vert.position.x > max.x) max.x = vert.position.x;
+        if (vert.position.y > max.y) max.y = vert.position.y;
+        if (vert.position.z > max.z) max.z = vert.position.z;
+    }
+}
+
+void calculate_world_AABB(glm::vec3& min, glm::vec3& max, const RenderQueueMesh& rqm)
+{
+    const glm::vec3& localMin = rqm.mesh->AABB_min;
+    const glm::vec3& localMax = rqm.mesh->AABB_max;
+
+    glm::mat4 model = glm::translate(glm::mat4(1.f), rqm.position) * glm::mat4_cast(rqm.rotation) * glm::scale(glm::mat4(1.f), rqm.scale);
+
+    glm::vec3 corners[8] = {
+        glm::vec3(localMin.x, localMin.y, localMin.z),
+        glm::vec3(localMax.x, localMin.y, localMin.z),
+        glm::vec3(localMin.x, localMax.y, localMin.z),
+        glm::vec3(localMax.x, localMax.y, localMin.z),
+        glm::vec3(localMin.x, localMin.y, localMax.z),
+        glm::vec3(localMax.x, localMin.y, localMax.z),
+        glm::vec3(localMin.x, localMax.y, localMax.z),
+        glm::vec3(localMax.x, localMax.y, localMax.z)
+    };
+
+    min = glm::vec3(FLT_MAX);
+    max = glm::vec3(-FLT_MAX);
+
+    for(int i = 0; i < 8; i++) {
+        glm::vec4 p = model * glm::vec4(corners[i], 1.0f);
+        p /= p.w;
+        min.x = glm::min(min.x, p.x);
+        min.y = glm::min(min.y, p.y);
+        min.z = glm::min(min.z, p.z);
+        max.x = glm::max(max.x, p.x);
+        max.y = glm::max(max.y, p.y);
+        max.z = glm::max(max.z, p.z);
+    }
+}
+
+bool is_AABB_inside_frustum(glm::vec3 min, glm::vec3 max, Plane left, Plane right, Plane bottom, Plane top, Plane near, Plane far) {
+    Plane planes[6] = {left, right, bottom, top, near, far};
+
+    for (int i = 0; i < 6; i++) {
+        const Plane& p = planes[i];
+
+        glm::vec3 positive_vertex;
+        positive_vertex.x = (p.normal.x >= 0.f) ? max.x : min.x;
+        positive_vertex.y = (p.normal.y >= 0.f) ? max.y : min.y;
+        positive_vertex.z = (p.normal.z >= 0.f) ? max.z : min.z;
+
+        float distance = p.normal.x * positive_vertex.x + p.normal.y * positive_vertex.y + p.normal.z * positive_vertex.z + p.distance;
+
+        if (distance < 0.f) return false;
+    }
+    return true;
+}
+
+void extract_frustum_planes(const glm::mat4& matrix, Plane& left, Plane& right, Plane& bottom, Plane& top, Plane& near, Plane& far) {
+    glm::vec4 row0 = glm::row(matrix, 0);
+    glm::vec4 row1 = glm::row(matrix, 1);
+    glm::vec4 row2 = glm::row(matrix, 2);
+    glm::vec4 row3 = glm::row(matrix, 3);
+
+    glm::vec4 leftPlane = row3+row0;
+    glm::vec4 rightPlane = row3-row0;
+    glm::vec4 bottomPlane = row3+row1;
+    glm::vec4 topPlane = row3-row1;
+    glm::vec4 nearPlane = row3+row2;
+    glm::vec4 farPlane = row3-row2;
+
+    auto normalize_plane = [](glm::vec4 p) -> Plane {
+        float length = glm::length(glm::vec3(p));
+        if (length > 0.00001f) {
+            p /= length;
+        }
+        return Plane{ glm::vec3(p), p.w };
+    };
+
+    left = normalize_plane(leftPlane);
+    right = normalize_plane(rightPlane);
+    bottom = normalize_plane(bottomPlane);
+    top = normalize_plane(topPlane);
+    near = normalize_plane(nearPlane);
+    far = normalize_plane(farPlane);
+}
+
 namespace gvk {
     void init();
     void quit();
@@ -957,6 +1058,13 @@ namespace gvk {
 
     inline glm::vec4 clear_color = {0.f, 0.f, 0.f, 1.f};
     inline float fov = 90.f;
+
+    inline Plane fc_top_plane;
+    inline Plane fc_bottom_plane;
+    inline Plane fc_left_plane;
+    inline Plane fc_right_plane;
+    inline Plane fc_far_plane;
+    inline Plane fc_near_plane;
 
     struct {
         glm::vec3 position  = {0.f, 0.f, -5.f};
@@ -1561,27 +1669,36 @@ namespace gvk {
 
         glm::mat4 view = glm::lookAt(camera.position, camera.position + camera.direction, glm::vec3{ 0.f, 1.f, 0.f });
 
+        extract_frustum_planes(projection*view, fc_left_plane, fc_right_plane, fc_bottom_plane, fc_top_plane, fc_near_plane, fc_far_plane);
+
         for (RenderQueueMesh m : render_queue) {
+            //  frustum culling
             glm::mat4 model = glm::translate(glm::mat4(1.f), m.position) * (glm::mat4_cast(m.rotation) * glm::scale(glm::mat4(1.f), m.scale));
+            glm::vec3 min;
+            glm::vec3 max;
+            calculate_world_AABB(min, max, m);
+            if (is_AABB_inside_frustum(min, max, fc_left_plane, fc_right_plane, fc_bottom_plane, fc_top_plane, fc_near_plane, fc_top_plane)) {
+                push_constants.world_matrix = projection * view * model;
 
-            push_constants.world_matrix = projection * view * model;
+                VkDescriptorSet imageSet = get_current_frame()._frame_descriptors.allocate(_vk_device, _single_image_descriptor_layout);
+                {
+                    DescriptorWriter writer;
+                    writer.write_image(0, m.image.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 
-            VkDescriptorSet imageSet = get_current_frame()._frame_descriptors.allocate(_vk_device, _single_image_descriptor_layout);
-            {
-                DescriptorWriter writer;
-                writer.write_image(0, m.image.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+                    writer.update_set(_vk_device, imageSet);
+                }
 
-                writer.update_set(_vk_device, imageSet);
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _mesh_pipeline_layout, 0, 1, &imageSet, 0, nullptr);
+
+                push_constants.vertex_buffer = m.mesh->mesh_buffers.vertex_buffer_address;
+
+                vkCmdPushConstants(cmd, _mesh_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(GPUDrawPushConstants), &push_constants);
+                vkCmdBindIndexBuffer(cmd, m.mesh->mesh_buffers.index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+
+                vkCmdDrawIndexed(cmd, m.mesh->surfaces[0].count, 1, m.mesh->surfaces[0].start_index, 0, 0);
+            } else {
+                cout << "object is outside frustum omfg it works4" << endl;
             }
-
-            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _mesh_pipeline_layout, 0, 1, &imageSet, 0, nullptr);
-
-            push_constants.vertex_buffer = m.mesh->mesh_buffers.vertex_buffer_address;
-
-            vkCmdPushConstants(cmd, _mesh_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(GPUDrawPushConstants), &push_constants);
-            vkCmdBindIndexBuffer(cmd, m.mesh->mesh_buffers.index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
-
-            vkCmdDrawIndexed(cmd, m.mesh->surfaces[0].count, 1, m.mesh->surfaces[0].start_index, 0, 0);
         }
 
         vkCmdEndRendering(cmd);
@@ -1701,7 +1818,7 @@ namespace gvk {
         vector<shared_ptr<MeshAsset>> meshes;
 
         vector<uint32_t> indices;
-        vector<Vertex>   vertices;
+        vector<Vertex> vertices;
 
         for (const tinygltf::Mesh& mesh : model.meshes) {
             MeshAsset new_mesh;
@@ -1843,6 +1960,8 @@ namespace gvk {
                 for (Vertex& vtx : vertices)
                     vtx.color = glm::vec4(vtx.normal, 1.f);
             }
+
+            calculate_AABB(new_mesh.AABB_min, new_mesh.AABB_max, vertices);
 
             new_mesh.mesh_buffers = upload_mesh(indices, vertices);
             meshes.emplace_back(make_shared<MeshAsset>(move(new_mesh)));
