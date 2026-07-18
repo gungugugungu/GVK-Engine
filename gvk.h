@@ -1125,7 +1125,15 @@ namespace gvk {
     inline Plane fc_far_plane;
     inline Plane fc_near_plane;
 
+    // skybox pass resources
     inline Skybox skybox;
+    inline AllocatedImage _skybox_draw_image;
+    VkDescriptorSetLayout _skybox_draw_image_descriptor_layout;
+
+    // composite pipeline
+    VkPipeline _composite_pipeline;
+    VkPipelineLayout _composite_pipeline_layout;
+    VkDescriptorSetLayout _composite_descriptor_layout;
 
     struct {
         glm::vec3 position  = {0.f, 0.f, -5.f};
@@ -1705,6 +1713,26 @@ namespace gvk {
 
     void draw_mesh(RenderQueueMesh render_queue_mesh) {
         render_queue.push_back(render_queue_mesh);
+    }
+
+    void draw_skybox_pass(VkCommandBuffer cmd) {
+        transition_image(cmd, _skybox_draw_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+        VkClearValue clear = { .color = { {clear_color.r, clear_color.g, clear_color.b, clear_color.a} } };
+        VkRenderingAttachmentInfo color_attachment = attachment_info(_skybox_draw_image.image_view, &clear, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        VkRenderingInfo rendering_info = {};
+        rendering_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+        rendering_info.pNext = nullptr;
+        rendering_info.renderArea = VkRect2D{VkOffset2D{0, 0}, _draw_extent};
+        rendering_info.layerCount = 1;
+        rendering_info.colorAttachmentCount = 1;
+        rendering_info.pColorAttachments = &color_attachment;
+        rendering_info.pDepthAttachment = VK_NULL_HANDLE;
+        rendering_info.pStencilAttachment = nullptr;
+
+        vkCmdBeginRendering(cmd, &rendering_info);
+
+        transition_image(cmd, _skybox_draw_image.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     }
 
     void draw_geometry(VkCommandBuffer cmd) {
