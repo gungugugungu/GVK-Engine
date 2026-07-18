@@ -1353,6 +1353,81 @@ namespace gvk {
             destroy_buffer(skybox.mesh_buffers.vertex_buffer);
             destroy_buffer(skybox.mesh_buffers.index_buffer);
         });
+
+        int w_width, w_height;
+        SDL_GetWindowSize(window, &w_width, &w_height);
+
+        VkExtent3D sb_draw_image_extent = {};
+        sb_draw_image_extent.width = static_cast<uint32_t>(w_width);
+        sb_draw_image_extent.height = static_cast<uint32_t>(w_height);
+        sb_draw_image_extent.depth = 1;
+
+        _skybox_draw_image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+        _skybox_draw_image.extent = sb_draw_image_extent;
+
+        VkImageUsageFlags draw_image_usages{};
+        draw_image_usages |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        draw_image_usages |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        draw_image_usages |= VK_IMAGE_USAGE_STORAGE_BIT;
+        draw_image_usages |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        draw_image_usages |= VK_IMAGE_USAGE_SAMPLED_BIT;
+
+        VkImageCreateInfo rimg_info = image_create_info(_skybox_draw_image.format, draw_image_usages, sb_draw_image_extent);
+
+        VmaAllocationCreateInfo rimg_allocinfo = {};
+        rimg_allocinfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+        rimg_allocinfo.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+        vmaCreateImage(_allocator, &rimg_info, &rimg_allocinfo, &_skybox_draw_image.image, &_skybox_draw_image.allocation, nullptr);
+        VkImageViewCreateInfo rview_info = imageview_create_info(_skybox_draw_image.format, _skybox_draw_image.image, _skybox_draw_image.mipmaps, VK_IMAGE_ASPECT_COLOR_BIT);
+
+        VK_CHECK(vkCreateImageView(_vk_device, &rview_info, nullptr, &_skybox_draw_image.image_view));
+
+        _main_deletion_queue.push_function([=]() {
+            vkDestroyImageView(_vk_device, _skybox_draw_image.image_view, nullptr);
+            vmaDestroyImage(_allocator, _skybox_draw_image.image, _skybox_draw_image.allocation);
+        });
+    }
+
+    void init_composite() {
+        DescriptorLayoutBuilder builder;
+        builder.add_binding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        builder.add_binding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        _composite_descriptor_layout = builder.build(_vk_device, VK_SHADER_STAGE_FRAGMENT_BIT);
+
+        VkPipelineLayoutCreateInfo layout_info = pipeline_layout_create_info();
+        layout_info.setLayoutCount = 1;
+        layout_info.pSetLayouts = &_composite_descriptor_layout;
+        vkCreatePipelineLayout(_vk_device, &layout_info, nullptr, &_composite_pipeline_layout);
+
+        VkShaderModule vert_shader, frag_shader;
+        if (!load_shader_module("../shaders/composite.vert.spv", _vk_device, &vert_shader)) {
+            cout << "error when loading composite vert shader" << endl;
+        }
+        if (!load_shader_module("../shaders/composite.frag.spv", _vk_device, &frag_shader)) {
+            cout << "error when loading composite frag shader" << endl;
+        }
+
+        PipelineBuilder pip_builder;
+        pip_builder._pipeline_layout = _composite_pipeline_layout;
+        pip_builder.set_shaders(vert_shader, frag_shader);
+        pip_builder.set_input_topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+        pip_builder.set_polygon_mode(VK_POLYGON_MODE_FILL);
+        pip_builder.set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE);
+        pip_builder.set_multisampling_none();
+        pip_builder.disable_blending();
+        pip_builder.disable_depthtest();
+        pip_builder.set_color_attachment_format(_draw_image.format);
+        _composite_pipeline = pip_builder.build_pipeline(_vk_device);
+
+        vkDestroyShaderModule(_vk_device, vert_shader, nullptr);
+        vkDestroyShaderModule(_vk_device, frag_shader, nullptr);
+
+        _main_deletion_queue.push_function([&]() {
+            vkDestroyPipelineLayout(_vk_device, _composite_pipeline_layout, nullptr);
+            vkDestroyPipeline(_vk_device, _composite_pipeline, nullptr);
+            vkDestroyDescriptorSetLayout(_vk_device, _composite_descriptor_layout, nullptr);
+        });
     }
 
     void init_imgui() {
@@ -1528,6 +1603,7 @@ namespace gvk {
         draw_image_usages |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
         draw_image_usages |= VK_IMAGE_USAGE_STORAGE_BIT;
         draw_image_usages |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        draw_image_usages |= VK_IMAGE_USAGE_SAMPLED_BIT;
 
         VkImageCreateInfo rimg_info = image_create_info(_draw_image.format, draw_image_usages, draw_image_extent);
 
@@ -1717,9 +1793,12 @@ namespace gvk {
 
     void draw_skybox_pass(VkCommandBuffer cmd) {
         transition_image(cmd, _skybox_draw_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        transition_image(cmd, _depth_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
 
         VkClearValue clear = { .color = { {clear_color.r, clear_color.g, clear_color.b, clear_color.a} } };
         VkRenderingAttachmentInfo color_attachment = attachment_info(_skybox_draw_image.image_view, &clear, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        // this fella right here might cause an issue but just like might, like probably not but if something goes wrong with the depth I'm gonna point my finger right here and call past me very stupid and lazy for reusing this
+        VkRenderingAttachmentInfo depth_attachment = depth_attachment_info(_depth_image.image_view, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
         VkRenderingInfo rendering_info = {};
         rendering_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
         rendering_info.pNext = nullptr;
@@ -1727,12 +1806,53 @@ namespace gvk {
         rendering_info.layerCount = 1;
         rendering_info.colorAttachmentCount = 1;
         rendering_info.pColorAttachments = &color_attachment;
-        rendering_info.pDepthAttachment = VK_NULL_HANDLE;
+        rendering_info.pDepthAttachment = &depth_attachment;
         rendering_info.pStencilAttachment = nullptr;
 
         vkCmdBeginRendering(cmd, &rendering_info);
+        VkViewport viewport = {};
+        viewport.x = 0;
+        viewport.y = 0;
+        viewport.width = static_cast<float>(_draw_extent.width);
+        viewport.height = static_cast<float>(_draw_extent.height);
+        viewport.minDepth = 0.f;
+        viewport.maxDepth = 1.f;
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+        VkRect2D scissor = {};
+        scissor.offset = {0, 0};
+        scissor.extent = _draw_extent;
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skybox.pip);
+
+        GPUDrawPushConstants push_constants;
+        glm::mat4 projection = glm::perspective(glm::radians(fov), static_cast<float>(_draw_extent.width) / static_cast<float>(_draw_extent.height), 10000.f, 0.1f);
+        projection[1][1] *= -1;
+        glm::mat4 view = glm::lookAt(camera.position, camera.position + camera.direction, glm::vec3{ 0.f, 1.f, 0.f });
+        push_constants.world_matrix = projection*glm::mat4(glm::mat3(view));
+
+        VkDescriptorSet imageSet = get_current_frame()._frame_descriptors.allocate(_vk_device, _single_image_descriptor_layout);
+        {
+            DescriptorWriter writer;
+            writer.write_image(0, skybox.cubemap.image.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+
+            writer.update_set(_vk_device, imageSet);
+        }
+
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _mesh_pipeline_layout, 0, 1, &imageSet, 0, nullptr);
+
+        push_constants.vertex_buffer = skybox.mesh_buffers.vertex_buffer_address;
+
+        vkCmdPushConstants(cmd, _mesh_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(GPUDrawPushConstants), &push_constants);
+        vkCmdBindIndexBuffer(cmd, skybox.mesh_buffers.index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+
+        vkCmdDrawIndexed(cmd, 36, 1, 6, 0, 0);
 
         transition_image(cmd, _skybox_draw_image.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        transition_image(cmd, _depth_image.image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+
+        vkCmdEndRendering(cmd);
     }
 
     void draw_geometry(VkCommandBuffer cmd) {
@@ -1809,6 +1929,36 @@ namespace gvk {
                 vkCmdDrawIndexed(cmd, m.mesh->surfaces[0].count, 1, m.mesh->surfaces[0].start_index, 0, 0);
             }
         }
+
+        vkCmdEndRendering(cmd);
+    }
+
+    void draw_composite_pass(VkCommandBuffer cmd) {
+        // I'm pretty sure I don't need to transition these images to SHADER_READ_ONLY_OPTIMAL cause it should already be that by now
+        VkRenderingAttachmentInfo color_attach = attachment_info(_draw_image.image_view, nullptr, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        VkRenderingInfo render_info = {};
+        render_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+        render_info.pNext = nullptr;
+        render_info.renderArea = VkRect2D{VkOffset2D{0, 0}, _draw_extent};
+        render_info.layerCount = 1;
+        render_info.colorAttachmentCount = 1;
+        render_info.pColorAttachments = &color_attach;
+        render_info.pDepthAttachment = nullptr; // this may cause a problem idk
+        render_info.pStencilAttachment = nullptr;
+
+        vkCmdBeginRendering(cmd, &render_info);
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _composite_pipeline);
+
+        VkDescriptorSet composite_set = get_current_frame()._frame_descriptors.allocate(_vk_device, _composite_descriptor_layout, nullptr);
+        DescriptorWriter writer;
+        writer.write_image(0, _draw_image.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        writer.write_image(1, _skybox_draw_image.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        writer.update_set(_vk_device, composite_set);
+
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _composite_pipeline_layout, 0, 1, &composite_set, 0, nullptr);
+
+        vkCmdDraw(cmd, 3, 1, 0, 0);
 
         vkCmdEndRendering(cmd);
     }
@@ -2037,6 +2187,7 @@ namespace gvk {
         init_default_data();
         init_skybox();
         init_imgui();
+        init_composite();
     }
 
     void draw() {
@@ -2060,7 +2211,9 @@ namespace gvk {
         transition_image(cmd, _draw_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         transition_image(cmd, _depth_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
 
+        //draw_skybox_pass(cmd);
         draw_geometry(cmd);
+        draw_composite_pass(cmd);
 
         render_queue.clear();
 
@@ -2106,9 +2259,9 @@ namespace gvk {
 
 
     void quit() {
+        vkDeviceWaitIdle(_vk_device);
         destroy_swapchain();
 
-        vkDeviceWaitIdle(_vk_device);
         for (int i = 0; i < FRAME_OVERLAP; i++) {
             vkDestroyCommandPool(_vk_device, _frames[i]._commandPool, nullptr);
 

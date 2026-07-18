@@ -5,7 +5,8 @@ layout(set = 0, binding = 1) uniform sampler2D skybox_color;
 layout(location = 0) out vec4 out_color;
 
 void main() {
-    vec2 uv = gl_FragCoord.xy / vec2(1920, 1080);
+    ivec2 canvas_size = textureSize(scene_color, 0);
+    vec2 uv = gl_FragCoord.xy / canvas_size;
     vec4 scene = texture(scene_color, uv);
     vec4 sky = texture(skybox_color, uv);
 
