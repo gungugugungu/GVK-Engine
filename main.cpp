@@ -44,14 +44,6 @@ TODO FEATURES:
     - box blur api
     - bloom
     - vignette
- - 4. 2D rendering
-    - quad mesh
-    - 2D pipeline
-    - surface class
-    - default surface
-    - draw_surface
-    - draw_rect
-    - font atlas rendering
  - 5. MSAA
     - multisample draw image
     - resolve attachment
@@ -65,10 +57,6 @@ int main() {
     AllocatedImage custom_texture = gvk::load_image("../custom.png").value();
     gvk::Surface leclerc_surface;
     leclerc_surface.load_from_file("../custom.jpg");
-
-    gvk::display.draw(leclerc_surface, {16, 16});
-    gvk::display.draw_rect(16, 16, {16, 16}, {1.f, 1.f, 0.f, 1.f});
-    gvk::display.refresh();
 
     CubeMap skybox_night = gvk::load_cubemap("../textures/skyboxes/night.png");
     gvk::skybox.cubemap = skybox_night;
