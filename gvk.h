@@ -1822,7 +1822,7 @@ namespace gvk {
         pipelineBuilder.set_polygon_mode(VK_POLYGON_MODE_FILL);
         pipelineBuilder.set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE);
         pipelineBuilder.set_multisampling_none();
-        pipelineBuilder.disable_blending(); // TODO: enable when you fixed it
+        pipelineBuilder.enable_blending_alphablend();
 
         pipelineBuilder.enable_depthtest(true, VK_COMPARE_OP_GREATER_OR_EQUAL);
 
