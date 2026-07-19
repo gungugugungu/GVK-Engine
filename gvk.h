@@ -1131,7 +1131,7 @@ namespace gvk {
     inline vector<RenderQueueMesh> render_queue;
 
     inline glm::vec4 clear_color = {0.f, 0.f, 0.f, 1.f};
-    inline float fov = 90.f;
+    inline float fov = 65.f;
 
     // frustum culling planes
     inline Plane fc_top_plane;
@@ -2122,11 +2122,34 @@ namespace gvk {
             float theta = asin(glm::clamp(dir.y, -1.f, 1.f));
             float u = phi / (2.f * glm::pi<float>()) + 0.5f;
             float v = 0.5f - theta / glm::pi<float>();
-            int px = (int)(u * src_width) % src_width;
-            if (px < 0) px += src_width;
-            int py = glm::clamp((int)(v * src_height), 0, src_height - 1);
-            int idx = (py * src_width + px) * 4;
-            return { src_data[idx], src_data[idx+1], src_data[idx+2], src_data[idx+3] };
+
+            float fx = u * src_width - 0.5f;
+            float fy = v * src_height - 0.5f;
+
+            int x0 = static_cast<int>(floor(fx));
+            int y0 = static_cast<int>(floor(fy));
+            int x1 = x0 + 1;
+            int y1 = y0 + 1;
+            float tx = fx - x0;
+            float ty = fy - y0;
+
+            x0 = ((x0 % src_width) + src_width) % src_width;
+            x1 = ((x1 % src_width) + src_width) % src_width;
+            y0 = glm::clamp(y0, 0, src_height - 1);
+            y1 = glm::clamp(y1, 0, src_height - 1);
+
+            auto fetch = [&](int x, int y) -> glm::vec4 {
+                int idx = (y * src_width + x) * 4;
+                return glm::vec4(src_data[idx], src_data[idx+1], src_data[idx+2], src_data[idx+3]);
+            };
+
+            glm::vec4 c = glm::mix(
+                glm::mix(fetch(x0, y0), fetch(x1, y0), tx),
+                glm::mix(fetch(x0, y1), fetch(x1, y1), tx),
+                ty
+            );
+
+            return glm::u8vec4(glm::clamp(c, 0.f, 255.f));
         };
 
         auto face_direction = [](int face, float u, float v) -> glm::vec3 {
