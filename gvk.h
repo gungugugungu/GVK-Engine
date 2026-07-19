@@ -21,6 +21,8 @@
 #include <imgui.h>
 #include "fmt/chrono.h"
 #include "include/stb/stb_image.h"
+#include "include/stb/stb_truetype.h"
+#include "include/stb/stb_image_resize2.h"
 #include "SDL3/SDL_vulkan.h"
 #include "imgui.h"
 #include "backends/imgui_impl_sdl3.h"
@@ -29,7 +31,6 @@
 #include <filesystem>
 #include <iostream>
 #include <glm/gtx/quaternion.hpp>
-
 #include "include/glm/glm/gtc/matrix_access.hpp"
 #include "include/tinygltf/tiny_gltf.h"
 
@@ -1309,6 +1310,269 @@ namespace gvk {
         vmaDestroyImage(_allocator, img.image, img.allocation);
     }
 
+    class Surface {
+    public:
+        vector<vector<glm::vec4>> pixels;
+        glm::vec4 color = {1.0f, 1.0f, 1.0f, 1.0f};
+        AllocatedImage vk_image;
+        VkFilter sampler_type = VK_FILTER_LINEAR;
+
+        void clear(int w, int h, glm::vec4 color = {1.0f, 1.0f, 1.0f, 0.0f}) {
+            pixels.resize(h);
+            for (int i = 0; i < h; i++) {
+                pixels[i].resize(w);
+                for (int j = 0; j < w; j++) {
+                    pixels[i][j] = color;
+                }
+            }
+        }
+
+        void draw(const Surface& other_surf, glm::vec2 pos) {
+            int dest_x = static_cast<int>(pos.x);
+            int dest_y = static_cast<int>(pos.y);
+
+            if (pixels.empty() || pixels[0].empty() || other_surf.pixels.empty() || other_surf.pixels[0].empty()) return;
+
+            int dest_height = pixels.size();
+            int dest_width = pixels[0].size();
+            int src_height = other_surf.pixels.size();
+            int src_width = other_surf.pixels[0].size();
+
+            for (int src_y = 0; src_y < src_height; src_y++) {
+                for (int src_x = 0; src_x < src_width; src_x++) {
+                    int target_x = dest_x + src_x;
+                    int target_y = dest_y + (src_height - 1 - src_y);
+
+                    if (target_x >= 0 && target_x < dest_width && target_y >= 0 && target_y < dest_height) {
+                        glm::vec4 src_pixel = other_surf.pixels[src_y][src_x];
+                        glm::vec4 final_pixel = {
+                            src_pixel.x * other_surf.color.x,
+                            src_pixel.y * other_surf.color.y,
+                            src_pixel.z * other_surf.color.z,
+                            src_pixel.w * other_surf.color.w
+                        };
+
+                        pixels[target_y][target_x] = final_pixel;
+                    }
+                }
+            }
+        }
+
+        void draw_text(const stbtt_fontinfo* font, const string& text, glm::vec2 pos, float scale, glm::vec4 text_color = {1.0f, 1.0f, 1.0f, 1.0f}) {
+            if (pixels.empty() || pixels[0].empty() || !font) return;
+
+            int dest_width = pixels[0].size();
+            int dest_height = pixels.size();
+
+            float x = pos.x;
+            float baseline_y = pos.y;
+
+            int ascent, descent, line_gap;
+            stbtt_GetFontVMetrics(font, &ascent, &descent, &line_gap);
+            float scaled_ascent = ascent * scale;
+            float scaled_descent = descent * scale;
+
+            float total_width = 0.0f;
+            for (size_t i = 0; i < text.length(); i++) {
+                int advance, lsb;
+                stbtt_GetCodepointHMetrics(font, text[i], &advance, &lsb);
+                total_width += advance * scale;
+
+                if (i < text.length() - 1) {
+                    int kern = stbtt_GetCodepointKernAdvance(font, text[i], text[i + 1]);
+                    total_width += kern * scale;
+                }
+            }
+
+            x += total_width;
+
+            for (int i = (int)text.length() - 1; i >= 0; i--) {
+                int advance, lsb;
+                stbtt_GetCodepointHMetrics(font, text[i], &advance, &lsb);
+
+                x -= advance * scale;
+
+                if (i > 0) {
+                    int kern = stbtt_GetCodepointKernAdvance(font, text[i-1], text[i]);
+                    x -= kern * scale;
+                }
+
+                int glyph_width, glyph_height, glyph_xoff, glyph_yoff;
+                unsigned char* glyph_bitmap = stbtt_GetCodepointBitmap(font, 0, scale, text[i], &glyph_width, &glyph_height, &glyph_xoff, &glyph_yoff);
+
+                if (glyph_bitmap) {
+                    int start_x = (int)(x + glyph_xoff);
+                    int start_y = (int)(baseline_y - scaled_descent - glyph_yoff - glyph_height);
+
+                    for (int gy = 0; gy < glyph_height; gy++) {
+                        for (int gx = 0; gx < glyph_width; gx++) {
+                            int target_x = start_x + gx;
+                            int target_y = start_y + gy;
+
+                            if (target_x >= 0 && target_x < dest_width && target_y >= 0 && target_y < dest_height) {
+                                float alpha = glyph_bitmap[gy * glyph_width + gx] / 255.0f;
+
+                                if (alpha > 0.0f) {
+                                    glm::vec4 bg_pixel = pixels[target_y][target_x];
+                                    glm::vec4 final_pixel = {
+                                        bg_pixel.x * (1.0f - alpha) + text_color.x * alpha,
+                                        bg_pixel.y * (1.0f - alpha) + text_color.y * alpha,
+                                        bg_pixel.z * (1.0f - alpha) + text_color.z * alpha,
+                                        bg_pixel.w * (1.0f - alpha) + text_color.w * alpha
+                                    };
+                                    pixels[target_y][target_x] = final_pixel;
+                                }
+                            }
+                        }
+                    }
+
+                    stbtt_FreeBitmap(glyph_bitmap, nullptr);
+                }
+            }
+        }
+
+        void load_from_file(string path) {
+            int img_width = 0, img_height = 0, num_channels = 0;
+            const int desired_channels = 4;
+            stbi_uc* stb_pixels = stbi_load(path.c_str(), &img_width, &img_height, &num_channels, desired_channels);
+
+            if (!stb_pixels) {
+                return;
+            }
+
+            pixels.resize(img_height);
+            for (int i = 0; i < img_height; i++) {
+                pixels[i].resize(img_width);
+                for (int j = 0; j < img_width; j++) {
+                    int idx = (i * img_width + j) * 4;
+                    pixels[i][j] = {
+                        stb_pixels[idx] / 255.0f,
+                        stb_pixels[idx + 1] / 255.0f,
+                        stb_pixels[idx + 2] / 255.0f,
+                        stb_pixels[idx + 3] / 255.0f
+                    };
+                }
+            }
+
+            stbi_image_free(stb_pixels);
+        }
+
+        void resize(int new_width, int new_height) {
+            if (pixels.empty() || pixels[0].empty()) return;
+
+            int old_width = pixels[0].size();
+            int old_height = pixels.size();
+
+            if (old_width == new_width && old_height == new_height) return;
+
+            vector<uint8_t> input_data(old_width * old_height * 4);
+            for (int y = 0; y < old_height; y++) {
+                for (int x = 0; x < old_width; x++) {
+                    int idx = (y * old_width + x) * 4;
+                    input_data[idx] = static_cast<uint8_t>(pixels[y][x].x * 255.0f);
+                    input_data[idx + 1] = static_cast<uint8_t>(pixels[y][x].y * 255.0f);
+                    input_data[idx + 2] = static_cast<uint8_t>(pixels[y][x].z * 255.0f);
+                    input_data[idx + 3] = static_cast<uint8_t>(pixels[y][x].w * 255.0f);
+                }
+            }
+
+            vector<uint8_t> output_data(new_width * new_height * 4);
+
+            stbir_resize_uint8_linear(
+                input_data.data(), old_width, old_height, 0,
+                output_data.data(), new_width, new_height, 0,
+                STBIR_RGBA
+            );
+
+            pixels.resize(new_height);
+            for (int y = 0; y < new_height; y++) {
+                pixels[y].resize(new_width);
+                for (int x = 0; x < new_width; x++) {
+                    int idx = (y * new_width + x) * 4;
+                    pixels[y][x] = {
+                        output_data[idx] / 255.0f,
+                        output_data[idx + 1] / 255.0f,
+                        output_data[idx + 2] / 255.0f,
+                        output_data[idx + 3] / 255.0f
+                    };
+                }
+            }
+        }
+
+        void resize_percentage(float width_percent, float height_percent) {
+            if (pixels.empty() || pixels[0].empty()) return;
+
+            int old_width = pixels[0].size();
+            int old_height = pixels.size();
+
+            int new_width = static_cast<int>(old_width * width_percent);
+            int new_height = static_cast<int>(old_height * height_percent);
+
+            if (new_width <= 0) new_width = 1;
+            if (new_height <= 0) new_height = 1;
+
+            resize(new_width, new_height);
+        }
+
+        void draw_rect(int w, int h, glm::vec2 pos, glm::vec4 color) {
+            if (pixels.empty() || pixels[0].empty()) return;
+
+            int dest_x = static_cast<int>(pos.x);
+            int dest_y = static_cast<int>(pos.y);
+            int src_width = pixels[0].size();
+            int src_height = pixels.size();
+
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++) {
+                    int target_x = dest_x + x;
+                    int target_y = dest_y + y;
+
+                    if (target_x >= 0 && target_x < src_width && target_y >= 0 && target_y < src_height) {
+                        pixels[target_y][target_x] = color;
+                    }
+                }
+            }
+        }
+
+        void refresh() {
+            // basically just create / recreate the AllocatedImage
+
+            if (pixels.empty() || pixels[0].empty()) {
+                cout << "Nuh uh the pixels are empty what are you refreshing" << endl;
+                return;
+            }
+
+            int height = pixels.size();
+            int width = pixels[0].size();
+            uint8_t data[height * width * 4];
+            for (int i = 0; i < height; i++) {
+                int src_y = height - 1 - i;
+                for (int j = 0; j < width; j++) {
+                    int idx = (i * width + j) * 4;
+                    data[idx] = static_cast<uint8_t>(pixels[src_y][j].x * 255.0f);
+                    data[idx + 1] = static_cast<uint8_t>(pixels[src_y][j].y * 255.0f);
+                    data[idx + 2] = static_cast<uint8_t>(pixels[src_y][j].z * 255.0f);
+                    data[idx + 3] = static_cast<uint8_t>(pixels[src_y][j].w * 255.0f);
+                }
+            }
+
+            VkExtent3D extent = { static_cast<uint32_t>(pixels[0].size()), static_cast<uint32_t>(pixels.size()), 1 };
+            vk_image = create_image(data, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_SAMPLED_BIT);
+
+            if (!in_deletion_queue) {
+                _main_deletion_queue.push_function([&]() {
+                    destroy_image(vk_image);
+                });
+                in_deletion_queue = true;
+            }
+        }
+
+    private:
+        bool in_deletion_queue = false;
+    };
+
+    Surface display;
+
     GPUMeshBuffers upload_mesh(span<uint32_t> indices, span<Vertex> vertices) {
         const size_t vb_size = vertices.size() * sizeof(Vertex);
         const size_t ib_size = indices.size() * sizeof(uint32_t);
@@ -1454,8 +1718,9 @@ namespace gvk {
 
     void init_composite() {
         DescriptorLayoutBuilder builder;
-        builder.add_binding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-        builder.add_binding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        builder.add_binding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // scene
+        builder.add_binding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // skybox
+        builder.add_binding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // 2d
         _composite_descriptor_layout = builder.build(_vk_device, VK_SHADER_STAGE_FRAGMENT_BIT);
 
         VkPipelineLayoutCreateInfo layout_info = pipeline_layout_create_info();
@@ -1491,6 +1756,14 @@ namespace gvk {
             vkDestroyPipeline(_vk_device, _composite_pipeline, nullptr);
             vkDestroyDescriptorSetLayout(_vk_device, _composite_descriptor_layout, nullptr);
         });
+    }
+
+    void init_2d() {
+        int w_width, w_height;
+        SDL_GetWindowSize(window, &w_width, &w_height);
+
+        display.clear(w_width, w_height, {0.f, 0.f, 0.f, 0.f});
+        display.refresh();
     }
 
     void init_imgui() {
@@ -2016,6 +2289,7 @@ namespace gvk {
         DescriptorWriter writer;
         writer.write_image(0, _draw_image.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
         writer.write_image(1, _skybox_draw_image.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        writer.write_image(2, display.vk_image.image_view, (display.sampler_type = VK_FILTER_LINEAR) ? _default_sampler_linear : _default_sampler_nearest, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
         writer.update_set(_vk_device, composite_set);
 
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _composite_pipeline_layout, 0, 1, &composite_set, 0, nullptr);
@@ -2097,7 +2371,7 @@ namespace gvk {
             return {};
         }
 
-        VkExtent3D extent = { (uint32_t)width, (uint32_t)height, 1 };
+        VkExtent3D extent = { static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1 };
         AllocatedImage image = create_image(data, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_SAMPLED_BIT);
 
         stbi_image_free(data);
@@ -2387,6 +2661,7 @@ namespace gvk {
         init_skybox();
         init_imgui();
         init_composite();
+        init_2d();
     }
 
     void draw() {

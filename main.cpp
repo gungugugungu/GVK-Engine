@@ -63,6 +63,12 @@ int main() {
 
     vector<shared_ptr<MeshAsset>> test_meshes = gvk::load_gltf_meshes("../test_monkey.glb").value();
     AllocatedImage custom_texture = gvk::load_image("../custom.png").value();
+    gvk::Surface leclerc_surface;
+    leclerc_surface.load_from_file("../custom.jpg");
+
+    gvk::display.draw(leclerc_surface, {16, 16});
+    gvk::display.draw_rect(16, 16, {16, 16}, {1.f, 1.f, 0.f, 1.f});
+    gvk::display.refresh();
 
     CubeMap skybox_night = gvk::load_cubemap("../textures/skyboxes/night.png");
     gvk::skybox.cubemap = skybox_night;
