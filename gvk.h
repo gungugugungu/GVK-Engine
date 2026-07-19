@@ -1341,7 +1341,7 @@ namespace gvk {
             for (int src_y = 0; src_y < src_height; src_y++) {
                 for (int src_x = 0; src_x < src_width; src_x++) {
                     int target_x = dest_x + src_x;
-                    int target_y = dest_y + (src_height - 1 - src_y);
+                    int target_y = dest_y + src_y;
 
                     if (target_x >= 0 && target_x < dest_width && target_y >= 0 && target_y < dest_height) {
                         glm::vec4 src_pixel = other_surf.pixels[src_y][src_x];
@@ -1546,13 +1546,12 @@ namespace gvk {
             int width = pixels[0].size();
             uint8_t data[height * width * 4];
             for (int i = 0; i < height; i++) {
-                int src_y = height - 1 - i;
                 for (int j = 0; j < width; j++) {
                     int idx = (i * width + j) * 4;
-                    data[idx] = static_cast<uint8_t>(pixels[src_y][j].x * 255.0f);
-                    data[idx + 1] = static_cast<uint8_t>(pixels[src_y][j].y * 255.0f);
-                    data[idx + 2] = static_cast<uint8_t>(pixels[src_y][j].z * 255.0f);
-                    data[idx + 3] = static_cast<uint8_t>(pixels[src_y][j].w * 255.0f);
+                    data[idx] = static_cast<uint8_t>(pixels[i][j].x * 255.0f);
+                    data[idx + 1] = static_cast<uint8_t>(pixels[i][j].y * 255.0f);
+                    data[idx + 2] = static_cast<uint8_t>(pixels[i][j].z * 255.0f);
+                    data[idx + 3] = static_cast<uint8_t>(pixels[i][j].w * 255.0f);
                 }
             }
 
