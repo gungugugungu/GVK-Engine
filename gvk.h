@@ -269,6 +269,21 @@ VkImageViewCreateInfo imageview_create_info(VkFormat format, VkImage image, uint
     return info;
 }
 
+VkImageViewCreateInfo cubemap_imageview_create_info(VkFormat format, VkImage image) {
+    VkImageViewCreateInfo info = {};
+    info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    info.pNext = nullptr;
+    info.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
+    info.image = image;
+    info.format = format;
+    info.subresourceRange.baseMipLevel = 0;
+    info.subresourceRange.levelCount = 1;
+    info.subresourceRange.baseArrayLayer = 0;
+    info.subresourceRange.layerCount = 6;
+    info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    return info;
+}
+
 void copy_image_to_image(VkCommandBuffer cmd, VkImage source, VkImage destination, VkExtent2D srcSize, VkExtent2D dstSize)
 {
     VkImageBlit2 blitRegion{ .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2, .pNext = nullptr };
@@ -1030,6 +1045,7 @@ struct Skybox {
     CubeMap cubemap;
     VkPipeline pip;
     VkPipelineLayout piplayout;
+    VkDescriptorSetLayout desc_layout;
 };
 
 namespace gvk {
@@ -1387,6 +1403,53 @@ namespace gvk {
             vkDestroyImageView(_vk_device, _skybox_draw_image.image_view, nullptr);
             vmaDestroyImage(_allocator, _skybox_draw_image.image, _skybox_draw_image.allocation);
         });
+
+        DescriptorLayoutBuilder builder;
+        builder.add_binding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        skybox.desc_layout = builder.build(_vk_device, VK_SHADER_STAGE_FRAGMENT_BIT);
+
+        VkPushConstantRange buffer_range{};
+        buffer_range.offset = 0;
+        buffer_range.size = sizeof(GPUDrawPushConstants);
+        buffer_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+        VkPipelineLayoutCreateInfo layout_info = pipeline_layout_create_info();
+        layout_info.pPushConstantRanges = &buffer_range;
+        layout_info.pushConstantRangeCount = 1;
+        layout_info.pSetLayouts = &skybox.desc_layout;
+        layout_info.setLayoutCount = 1;
+        vkCreatePipelineLayout(_vk_device, &layout_info, nullptr, &skybox.piplayout);
+
+        VkShaderModule vert_shader, frag_shader;
+        if (!load_shader_module("../shaders/skybox.vert.spv", _vk_device, &vert_shader)) {
+            cout << "error when loading skybox vert shader" << endl;
+        }
+        if (!load_shader_module("../shaders/skybox.frag.spv", _vk_device, &frag_shader)) {
+            cout << "error when loading skybox frag shader" << endl;
+        }
+
+        PipelineBuilder pip_builder;
+        pip_builder._pipeline_layout = skybox.piplayout;
+        pip_builder.set_shaders(vert_shader, frag_shader);
+        pip_builder.set_input_topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+        pip_builder.set_polygon_mode(VK_POLYGON_MODE_FILL);
+        // if you can't see anything it might just be the backface culling so remember that
+        pip_builder.set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE);
+        pip_builder.set_multisampling_none();
+        pip_builder.disable_blending();
+        pip_builder.disable_depthtest();
+        pip_builder.set_color_attachment_format(_skybox_draw_image.format);
+        pip_builder.set_depth_format(_depth_image.format);
+        skybox.pip = pip_builder.build_pipeline(_vk_device);
+
+        vkDestroyShaderModule(_vk_device, vert_shader, nullptr);
+        vkDestroyShaderModule(_vk_device, frag_shader, nullptr);
+
+        _main_deletion_queue.push_function([&]() {
+            vkDestroyPipelineLayout(_vk_device, skybox.piplayout, nullptr);
+            vkDestroyPipeline(_vk_device, skybox.pip, nullptr);
+            vkDestroyDescriptorSetLayout(_vk_device, skybox.desc_layout, nullptr);
+        });
     }
 
     void init_composite() {
@@ -1684,7 +1747,7 @@ namespace gvk {
         uint32_t grey = glm::packUnorm4x8(glm::vec4(0.66f, 0.66f, 0.66f, 1));
         _gray_image = create_image((void*)&grey, VkExtent3D{ 1, 1, 1 }, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT);
 
-        uint32_t black = glm::packUnorm4x8(glm::vec4(0, 0, 0, 0));
+        uint32_t black = glm::packUnorm4x8(glm::vec4(0, 0, 0, 1.f));
         _black_image = create_image((void*)&black, VkExtent3D{ 1, 1, 1 }, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT);
 
         uint32_t magenta = glm::packUnorm4x8(glm::vec4(1, 0, 1, 1));
@@ -1832,31 +1895,30 @@ namespace gvk {
         glm::mat4 view = glm::lookAt(camera.position, camera.position + camera.direction, glm::vec3{ 0.f, 1.f, 0.f });
         push_constants.world_matrix = projection*glm::mat4(glm::mat3(view));
 
-        VkDescriptorSet imageSet = get_current_frame()._frame_descriptors.allocate(_vk_device, _single_image_descriptor_layout);
+        VkDescriptorSet imageSet = get_current_frame()._frame_descriptors.allocate(_vk_device, skybox.desc_layout);
         {
             DescriptorWriter writer;
-            writer.write_image(0, skybox.cubemap.image.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            writer.write_image(0, skybox.cubemap.image_view, skybox.cubemap.sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 
             writer.update_set(_vk_device, imageSet);
         }
 
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _mesh_pipeline_layout, 0, 1, &imageSet, 0, nullptr);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skybox.piplayout, 0, 1, &imageSet, 0, nullptr);
 
         push_constants.vertex_buffer = skybox.mesh_buffers.vertex_buffer_address;
 
         vkCmdPushConstants(cmd, _mesh_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(GPUDrawPushConstants), &push_constants);
         vkCmdBindIndexBuffer(cmd, skybox.mesh_buffers.index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 
-        vkCmdDrawIndexed(cmd, 36, 1, 6, 0, 0);
-
-        transition_image(cmd, _skybox_draw_image.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-        transition_image(cmd, _depth_image.image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        vkCmdDrawIndexed(cmd, 36, 1, 0, 0, 0);
 
         vkCmdEndRendering(cmd);
+
+        transition_image(cmd, _skybox_draw_image.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     }
 
     void draw_geometry(VkCommandBuffer cmd) {
-        VkClearValue clear = { .color = { {clear_color.r, clear_color.g, clear_color.b, clear_color.a} } };
+        VkClearValue clear = { .color = { {clear_color.r, clear_color.g, clear_color.b, 0.f} } };
         VkRenderingAttachmentInfo color_attachment = attachment_info(_draw_image.image_view, &clear, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         VkRenderingAttachmentInfo depth_attachment = depth_attachment_info(_depth_image.image_view, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
         VkRenderingInfo render_info = rendering_info(_draw_extent, &color_attachment, &depth_attachment);
@@ -2042,6 +2104,120 @@ namespace gvk {
         return image;
     }
 
+    CubeMap load_cubemap(filesystem::path path) {
+        int src_width, src_height, src_channels;
+        stbi_uc* src_data = stbi_load(path.string().c_str(), &src_width, &src_height, &src_channels, STBI_rgb_alpha);
+        if (!src_data) {
+            cout << "failed to load cubemap: " << path.string() << endl;
+            return {};
+        }
+
+        int face_size = src_width/4;
+        size_t face_data_size = face_size * face_size * 4;
+        vector<uint8_t> face_pixels(6*face_data_size);
+
+        auto sample_equirect = [&](glm::vec3 dir) -> glm::u8vec4 {
+            dir = glm::normalize(dir);
+            float phi = atan2(dir.z, dir.x);
+            float theta = asin(glm::clamp(dir.y, -1.f, 1.f));
+            float u = phi / (2.f * glm::pi<float>()) + 0.5f;
+            float v = 0.5f - theta / glm::pi<float>();
+            int px = (int)(u * src_width) % src_width;
+            if (px < 0) px += src_width;
+            int py = glm::clamp((int)(v * src_height), 0, src_height - 1);
+            int idx = (py * src_width + px) * 4;
+            return { src_data[idx], src_data[idx+1], src_data[idx+2], src_data[idx+3] };
+        };
+
+        auto face_direction = [](int face, float u, float v) -> glm::vec3 {
+            switch (face) {
+                case 0: return {  1.f, -v, -u };
+                case 1: return { -1.f, -v,  u };
+                case 2: return {  u,   1.f,  v };
+                case 3: return {  u,  -1.f, -v };
+                case 4: return {  u,  -v,   1.f };
+                case 5: return { -u,  -v,  -1.f };
+                default: return { 0.f, 0.f, 1.f };
+            }
+        };
+
+        for (int face = 0; face < 6; face++) {
+            for (int py = 0; py < face_size; py++) {
+                for (int px = 0; px < face_size; px++) {
+                    float u = ((float)px + 0.5f) / face_size * 2.f - 1.f;
+                    float v = ((float)py + 0.5f) / face_size * 2.f - 1.f;
+                    glm::u8vec4 col = sample_equirect(face_direction(face, u, v));
+                    size_t dst = ((size_t)face * face_size * face_size + py * face_size + px) * 4;
+                    face_pixels[dst + 0] = col.r;
+                    face_pixels[dst + 1] = col.g;
+                    face_pixels[dst + 2] = col.b;
+                    face_pixels[dst + 3] = col.a;
+                }
+            }
+        }
+
+        stbi_image_free(src_data);
+
+        VkExtent3D face_extent = {static_cast<uint32_t>(face_size), static_cast<uint32_t>(face_size), 1};
+
+        AllocatedBuffer staging = create_buffer(6*face_data_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+        memcpy(staging.info.pMappedData, face_pixels.data(), 6*face_data_size);
+
+        AllocatedImage new_image;
+        new_image.format = VK_FORMAT_R8G8B8A8_SRGB;
+        new_image.extent = face_extent;
+        new_image.mipmaps = 1;
+
+        VkImageCreateInfo img_info = image_create_info(VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, face_extent);
+        img_info.arrayLayers = 6;
+        img_info.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
+
+        VmaAllocationCreateInfo alloc_info = {};
+        alloc_info.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+        alloc_info.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+
+        VK_CHECK(vmaCreateImage(_allocator, &img_info, &alloc_info, &new_image.image, &new_image.allocation, nullptr));
+
+        immediate_submit([&](VkCommandBuffer cmd) {
+            transition_image(cmd, new_image.image, VK_IMAGE_LAYOUT_UNDEFINED,  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+            for (int face = 0; face < 6; face++) {
+                VkBufferImageCopy region = {};
+                region.bufferOffset = face*face_data_size;
+                region.bufferRowLength = 0;
+                region.bufferImageHeight = 0;
+                region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                region.imageSubresource.mipLevel = 0;
+                region.imageSubresource.baseArrayLayer = face;
+                region.imageSubresource.layerCount = 1;
+                region.imageExtent = face_extent;
+                vkCmdCopyBufferToImage(cmd, staging.buffer, new_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+            }
+
+            transition_image(cmd, new_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        });
+
+        destroy_buffer(staging);
+
+        VkImageViewCreateInfo view_info = cubemap_imageview_create_info(VK_FORMAT_R8G8B8A8_SRGB, new_image.image);
+        VK_CHECK(vkCreateImageView(_vk_device, &view_info, nullptr, &new_image.image_view));
+
+        VkSamplerCreateInfo sampler_info = {.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+        sampler_info.magFilter = VK_FILTER_LINEAR;
+        sampler_info.minFilter = VK_FILTER_LINEAR;
+        sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+        sampler_info.maxLod = VK_LOD_CLAMP_NONE;
+
+        CubeMap result;
+        result.image = new_image;
+        result.image_view = new_image.image_view;
+        VK_CHECK(vkCreateSampler(_vk_device, &sampler_info, nullptr, &result.sampler));
+
+        return result;
+    }
+
     optional<vector<shared_ptr<MeshAsset>>> load_gltf_meshes(filesystem::path path)
     {
         fmt::println("loading GLTF: {}", path.string());
@@ -2211,7 +2387,7 @@ namespace gvk {
         transition_image(cmd, _draw_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         transition_image(cmd, _depth_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
 
-        //draw_skybox_pass(cmd);
+        draw_skybox_pass(cmd);
         draw_geometry(cmd);
         draw_composite_pass(cmd);
 

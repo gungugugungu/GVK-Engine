@@ -69,6 +69,9 @@ int main() {
     vector<shared_ptr<MeshAsset>> test_meshes = gvk::load_gltf_meshes("../test_monkey.glb").value();
     AllocatedImage custom_texture = gvk::load_image("../custom.png").value();
 
+    CubeMap skybox_night = gvk::load_cubemap("../textures/skyboxes/night.png");
+    gvk::skybox.cubemap = skybox_night;
+
     gvk::clear_color = {0.05f, 0.05f, 0.05f, 1.f};
 
     float yaw = 90.f;
