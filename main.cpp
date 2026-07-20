@@ -24,7 +24,7 @@ TODO FEATURES:
     - shadow sampling in the main fragment shader
     - shadow bias
     - PCF filtering
- - 6. material system
+ - 8. material system
     - material struct (albedo map, normal map, roughness map, emissive map, scalar tint and roughness and metallic factors)
     - material descriptor layout
     - default fallback textures
@@ -32,22 +32,18 @@ TODO FEATURES:
     - draw_mesh api update
     - emissive support in the shader
     - creating and destroying materials for user-made materials
- - 8. instanced rendering
+ - 7. instanced rendering
     - per-instance storage buffer
     - draw_mesh_instanced api
     - write the shader for it (gl_InstanceIndex)
     - move to indirect drawing so the instance count can eventually come from gpu-side data
- - 7. post processing stack
+ - 6. post processing stack
     - fullscreen traingle pipeline
     - HDR tonemapping
     - guassian blur api
     - box blur api
     - bloom
     - vignette
- - 5. MSAA
-    - multisample draw image
-    - resolve attachment
-    - configurable sample count
 */
 
 int main() {

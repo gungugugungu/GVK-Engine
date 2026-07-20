@@ -1611,6 +1611,19 @@ namespace gvk {
 
     Surface display;
 
+    struct Material {
+        AllocatedImage albedo_map;
+        AllocatedImage normal_map;
+        AllocatedImage rougness_map;
+        AllocatedImage metallic_map;
+        AllocatedImage emissive_map;
+        AllocatedImage ao_map;
+
+        float scalar_tint;
+        float roughness;
+        float metallic;
+    };
+
     GPUMeshBuffers upload_mesh(span<uint32_t> indices, span<Vertex> vertices) {
         const size_t vb_size = vertices.size() * sizeof(Vertex);
         const size_t ib_size = indices.size() * sizeof(uint32_t);
