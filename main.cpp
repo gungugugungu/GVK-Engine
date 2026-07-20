@@ -58,8 +58,7 @@ int main() {
     gvk::Surface leclerc_surface;
     leclerc_surface.load_from_file("../custom.jpg");
 
-    CubeMap skybox_night = gvk::load_cubemap("../textures/skyboxes/night.png");
-    gvk::skybox.cubemap = skybox_night;
+    gvk::load_skybox("../textures/skyboxes/night.png");
 
     gvk::clear_color = {0.05f, 0.05f, 0.05f, 1.f};
 

@@ -262,7 +262,7 @@ VkImageViewCreateInfo imageview_create_info(VkFormat format, VkImage image, uint
     info.image = image;
     info.format = format;
     info.subresourceRange.baseMipLevel = 0;
-    info.subresourceRange.levelCount = mipmaps;
+    info.subresourceRange.levelCount = mipmaps == 0 ? 1 : mipmaps;
     info.subresourceRange.baseArrayLayer = 0;
     info.subresourceRange.layerCount = 1;
     info.subresourceRange.aspectMask = aspectFlags;
@@ -337,12 +337,12 @@ struct DeletionQueue
 };
 
 struct AllocatedImage {
-    VkImage image;
-    VkImageView image_view;
-    VmaAllocation allocation;
-    VkExtent3D extent;
-    VkFormat format;
-    uint32_t mipmaps;
+    VkImage image = VK_NULL_HANDLE;
+    VkImageView image_view = VK_NULL_HANDLE;
+    VmaAllocation allocation = nullptr;
+    VkExtent3D extent = {};
+    VkFormat format = VK_FORMAT_UNDEFINED;
+    uint32_t mipmaps = 1;
 };
 
 struct DescriptorLayoutBuilder {
@@ -1181,12 +1181,13 @@ namespace gvk {
     inline VkDescriptorSetLayout _skybox_draw_image_descriptor_layout;
 
     // composite pipeline
+    inline AllocatedImage _composite_image;
     inline VkPipeline _composite_pipeline;
     inline VkPipelineLayout _composite_pipeline_layout;
     inline VkDescriptorSetLayout _composite_descriptor_layout;
 
     // msaa
-    inline VkSampleCountFlagBits msaa_sample_count = VK_SAMPLE_COUNT_4_BIT;
+    inline VkSampleCountFlagBits msaa_sample_count = VK_SAMPLE_COUNT_8_BIT;
     inline AllocatedImage _draw_image_msaa;
     inline AllocatedImage _depth_image_msaa;
 
@@ -1339,8 +1340,13 @@ namespace gvk {
         return new_image;
     }
     void destroy_image(const AllocatedImage& img) {
-        vkDestroyImageView(_vk_device, img.image_view, nullptr);
-        vmaDestroyImage(_allocator, img.image, img.allocation);
+        if (img.image_view != VK_NULL_HANDLE) {
+            vkDestroyImageView(_vk_device, img.image_view, nullptr);
+        }
+
+        if (img.image != VK_NULL_HANDLE && img.allocation != nullptr) {
+            vmaDestroyImage(_allocator, img.image, img.allocation);
+        }
     }
 
     class Surface {
@@ -1676,6 +1682,7 @@ namespace gvk {
 
         _skybox_draw_image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
         _skybox_draw_image.extent = sb_draw_image_extent;
+        _skybox_draw_image.mipmaps = 1;
 
         VkImageUsageFlags draw_image_usages{};
         draw_image_usages |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
@@ -1703,13 +1710,19 @@ namespace gvk {
         // msaa for the skybox
         _skybox_draw_image_msaa.format = VK_FORMAT_R16G16B16A16_SFLOAT;
         _skybox_draw_image_msaa.extent = sb_draw_image_extent;
-        draw_image_usages |= VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
+        _skybox_draw_image_msaa.mipmaps = 1;
+        draw_image_usages = {};
+        draw_image_usages |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        draw_image_usages |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        rimg_info.usage = draw_image_usages;
         rimg_info.samples = msaa_sample_count;
+        rimg_info.mipLevels = 1;
 
         vmaCreateImage(_allocator, &rimg_info, &rimg_allocinfo, &_skybox_draw_image_msaa.image, &_skybox_draw_image_msaa.allocation, nullptr);
         VkImageViewCreateInfo rmview_info = imageview_create_info(_skybox_draw_image_msaa.format, _skybox_draw_image_msaa.image, _skybox_draw_image_msaa.mipmaps, VK_IMAGE_ASPECT_COLOR_BIT);
+        rmview_info.subresourceRange.levelCount = 1;
 
-        VK_CHECK(vkCreateImageView(_vk_device, &rview_info, nullptr, &_skybox_draw_image_msaa.image_view));
+        VK_CHECK(vkCreateImageView(_vk_device, &rmview_info, nullptr, &_skybox_draw_image_msaa.image_view));
 
         _main_deletion_queue.push_function([=]() {
             vkDestroyImageView(_vk_device, _skybox_draw_image_msaa.image_view, nullptr);
@@ -1803,6 +1816,40 @@ namespace gvk {
             vkDestroyPipelineLayout(_vk_device, _composite_pipeline_layout, nullptr);
             vkDestroyPipeline(_vk_device, _composite_pipeline, nullptr);
             vkDestroyDescriptorSetLayout(_vk_device, _composite_descriptor_layout, nullptr);
+        });
+
+        int w_width, w_height;
+        SDL_GetWindowSize(window, &w_width, &w_height);
+
+        VkExtent3D composite_image_extent = {};
+        composite_image_extent.width = static_cast<uint32_t>(w_width);
+        composite_image_extent.height = static_cast<uint32_t>(w_height);
+        composite_image_extent.depth = 1;
+
+        _composite_image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+        _composite_image.extent = composite_image_extent;
+        _composite_image.mipmaps = 1;
+
+        VkImageUsageFlags composite_image_usages{};
+        composite_image_usages |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        composite_image_usages |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        composite_image_usages |= VK_IMAGE_USAGE_STORAGE_BIT;
+        composite_image_usages |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        composite_image_usages |= VK_IMAGE_USAGE_SAMPLED_BIT;
+
+        VkImageCreateInfo rimg_info = image_create_info(_composite_image.format, composite_image_usages, composite_image_extent);
+
+        VmaAllocationCreateInfo rimg_allocinfo = {};
+        rimg_allocinfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+        rimg_allocinfo.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+        vmaCreateImage(_allocator, &rimg_info, &rimg_allocinfo, &_composite_image.image, &_composite_image.allocation, nullptr);
+        VkImageViewCreateInfo rview_info = imageview_create_info(_composite_image.format, _composite_image.image, _composite_image.mipmaps, VK_IMAGE_ASPECT_COLOR_BIT);
+
+        VK_CHECK(vkCreateImageView(_vk_device, &rview_info, nullptr, &_composite_image.image_view));
+
+        _main_deletion_queue.push_function([&]() {
+            destroy_image(_composite_image);
         });
     }
 
@@ -1981,6 +2028,7 @@ namespace gvk {
 
         _draw_image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
         _draw_image.extent = draw_image_extent;
+        _draw_image.mipmaps = 1;
 
         VkImageUsageFlags draw_image_usages{};
         draw_image_usages |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
@@ -2002,6 +2050,7 @@ namespace gvk {
 
         _depth_image.format = VK_FORMAT_D32_SFLOAT;
         _depth_image.extent = draw_image_extent;
+        _depth_image.mipmaps = 1;
         VkImageUsageFlags depthImageUsages{};
         depthImageUsages |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
 
@@ -2033,10 +2082,11 @@ namespace gvk {
 
         _draw_image_msaa.format = VK_FORMAT_R16G16B16A16_SFLOAT;
         _draw_image_msaa.extent = draw_image_extent;
+        _draw_image_msaa.mipmaps = 1;
 
         VkImageUsageFlags draw_image_usages{};
         draw_image_usages |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-        draw_image_usages |= VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT;
+        draw_image_usages |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 
         VkImageCreateInfo rimg_info = image_create_info(_draw_image_msaa.format, draw_image_usages, draw_image_extent);
         rimg_info.samples = msaa_sample_count;
@@ -2054,6 +2104,7 @@ namespace gvk {
 
         _depth_image_msaa.format = VK_FORMAT_D32_SFLOAT;
         _depth_image_msaa.extent = draw_image_extent;
+        _depth_image_msaa.mipmaps = 1;
         VkImageUsageFlags depthImageUsages{};
         depthImageUsages |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
 
@@ -2231,9 +2282,6 @@ namespace gvk {
     }
 
     void draw_skybox_pass(VkCommandBuffer cmd) {
-        transition_image(cmd, _skybox_draw_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-        transition_image(cmd, _depth_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
-
         VkClearValue clear = { .color = { {clear_color.r, clear_color.g, clear_color.b, clear_color.a} } };
         VkRenderingAttachmentInfo color_attachment = attachment_info(_skybox_draw_image_msaa.image_view, &clear, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         // this fella right here might cause an issue but just like might, like probably not but if something goes wrong with the depth I'm gonna point my finger right here and call past me very stupid and lazy for reusing this
@@ -2283,14 +2331,12 @@ namespace gvk {
 
         push_constants.vertex_buffer = skybox.mesh_buffers.vertex_buffer_address;
 
-        vkCmdPushConstants(cmd, _mesh_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(GPUDrawPushConstants), &push_constants);
+        vkCmdPushConstants(cmd, skybox.piplayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(GPUDrawPushConstants), &push_constants);
         vkCmdBindIndexBuffer(cmd, skybox.mesh_buffers.index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 
         vkCmdDrawIndexed(cmd, 36, 1, 0, 0, 0);
 
         vkCmdEndRendering(cmd);
-
-        transition_image(cmd, _skybox_draw_image.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     }
 
     void draw_geometry(VkCommandBuffer cmd) {
@@ -2373,7 +2419,8 @@ namespace gvk {
 
     void draw_composite_pass(VkCommandBuffer cmd) {
         // I'm pretty sure I don't need to transition these images to SHADER_READ_ONLY_OPTIMAL cause it should already be that by now
-        VkRenderingAttachmentInfo color_attach = attachment_info(_draw_image.image_view, nullptr, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        VkClearValue clear = { .color = { {0.f, 0.f, 0.f, 1.f} } };
+        VkRenderingAttachmentInfo color_attach = attachment_info(_composite_image.image_view, &clear, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         VkRenderingInfo render_info = {};
         render_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
         render_info.pNext = nullptr;
@@ -2459,10 +2506,6 @@ namespace gvk {
 
             _frames[i]._frame_descriptors = DescriptorAllocatorGrowable{};
             _frames[i]._frame_descriptors.init(_vk_device, 1000, frame_sizes);
-
-            _main_deletion_queue.push_function([&, i]() {
-                _frames[i]._frame_descriptors.destroy_pools(_vk_device);
-            });
         }
     }
 
@@ -2615,7 +2658,27 @@ namespace gvk {
         result.image_view = new_image.image_view;
         VK_CHECK(vkCreateSampler(_vk_device, &sampler_info, nullptr, &result.sampler));
 
+        _main_deletion_queue.push_function([&]() {
+            destroy_image(new_image);
+            vkDestroySampler(_vk_device, result.sampler, nullptr);
+        });
+
         return result;
+    }
+
+    bool load_skybox(filesystem::path path) {
+        if (skybox.cubemap.sampler != VK_NULL_HANDLE) {
+            vkDestroySampler(_vk_device, skybox.cubemap.sampler, nullptr);
+        }
+        if (skybox.cubemap.image.image_view != VK_NULL_HANDLE) {
+            destroy_image(skybox.cubemap.image);
+        }
+
+        skybox.cubemap = load_cubemap(path);
+        if (skybox.cubemap.image.image != VK_NULL_HANDLE) {
+            return true;
+        }
+        return false;
     }
 
     optional<vector<shared_ptr<MeshAsset>>> load_gltf_meshes(filesystem::path path)
@@ -2785,9 +2848,9 @@ namespace gvk {
         VkCommandBufferBeginInfo cmd_begin_info = create_command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
         VK_CHECK(vkBeginCommandBuffer(cmd, &cmd_begin_info));
 
-        // transition directly to color attachment for geometry
-        transition_image(cmd, _draw_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-        transition_image(cmd, _depth_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+        transition_image(cmd, _draw_image_msaa.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        transition_image(cmd, _skybox_draw_image_msaa.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        transition_image(cmd, _depth_image_msaa.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
 
         draw_skybox_pass(cmd);
         draw_geometry(cmd);
@@ -2807,15 +2870,17 @@ namespace gvk {
         transition_image(cmd, _draw_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         transition_image(cmd, _skybox_draw_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
+        transition_image(cmd, _composite_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
         draw_composite_pass(cmd);
 
         render_queue.clear();
 
         // blit to swapchain
-        transition_image(cmd, _draw_image.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        transition_image(cmd, _composite_image.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
         transition_image(cmd, _swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
-        copy_image_to_image(cmd, _draw_image.image, _swapchain_images[swapchain_image_index], _draw_extent, _swapchain_extent);
+        copy_image_to_image(cmd, _composite_image.image, _swapchain_images[swapchain_image_index], _draw_extent, _swapchain_extent);
         transition_image(cmd, _swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
         draw_imgui(cmd, _swapchain_image_views[swapchain_image_index]);
@@ -2854,6 +2919,12 @@ namespace gvk {
 
     void quit() {
         vkDeviceWaitIdle(_vk_device);
+
+        for (int i = 0; i < FRAME_OVERLAP; i++) {
+            _frames[i]._deletion_queue.flush();
+            _frames[i]._frame_descriptors.destroy_pools(_vk_device);
+        }
+
         destroy_swapchain();
 
         for (int i = 0; i < FRAME_OVERLAP; i++) {
