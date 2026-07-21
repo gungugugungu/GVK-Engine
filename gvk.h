@@ -1623,6 +1623,7 @@ namespace gvk {
 
         // gaussian_blur
         AllocatedImage _gb_out_image;
+        AllocatedImage _gb_out_image_2;
         VkPipeline _gb_pipeline;
         VkPipelineLayout _gb_pipeline_layout;
         VkDescriptorSetLayout _gbb_descriptor_layout;
@@ -1642,7 +1643,6 @@ namespace gvk {
         void _init_gaussian_blur() {
             DescriptorLayoutBuilder builder;
             builder.add_binding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-            builder.add_binding(1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
             _gbb_descriptor_layout = builder.build(_vk_device, VK_SHADER_STAGE_FRAGMENT_BIT);
 
             VkPushConstantRange blur_push_range{};
@@ -1688,7 +1688,7 @@ namespace gvk {
             gb_out_extent.height = static_cast<uint32_t>(w_height);
             gb_out_extent.depth = 1;
 
-            _gb_out_image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+            _gb_out_image.format = VK_FORMAT_R8G8B8A8_SRGB;
             _gb_out_image.extent = gb_out_extent;
             _gb_out_image.mipmaps = 1;
 
@@ -1710,8 +1710,20 @@ namespace gvk {
 
             VK_CHECK(vkCreateImageView(_vk_device, &rview_info, nullptr, &_gb_out_image.image_view));
 
+            _gb_out_image_2.format = VK_FORMAT_R8G8B8A8_SRGB;
+            _gb_out_image_2.extent = gb_out_extent;
+            _gb_out_image_2.mipmaps = 1;
+
+            VkImageCreateInfo rimg_info2 = image_create_info(_gb_out_image_2.format, _gb_out_image_usages, gb_out_extent);
+
+            vmaCreateImage(_allocator, &rimg_info2, &rimg_allocinfo, &_gb_out_image_2.image, &_gb_out_image_2.allocation, nullptr);
+            VkImageViewCreateInfo rview_info2 = imageview_create_info(_gb_out_image_2.format, _gb_out_image_2.image, _gb_out_image_2.mipmaps, VK_IMAGE_ASPECT_COLOR_BIT);
+
+            VK_CHECK(vkCreateImageView(_vk_device, &rview_info2, nullptr, &_gb_out_image_2.image_view));
+
             _main_deletion_queue.push_function([&]() {
                 destroy_image(_gb_out_image);
+                destroy_image(_gb_out_image_2);
                 vkDestroyPipelineLayout(_vk_device, _gb_pipeline_layout, nullptr);
                 vkDestroyPipeline(_vk_device, _gb_pipeline, nullptr);
                 vkDestroyDescriptorSetLayout(_vk_device, _gbb_descriptor_layout, nullptr);
@@ -1774,10 +1786,25 @@ namespace gvk {
                 transition_image(cmd, dst.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             };
 
-            for (int i = 0; i < blur_iterations; i++) {
-                blur_pass(image, _gb_out_image, 0);
-                blur_pass(_gb_out_image, image, 1);
+            if (blur_iterations <= 0) return;
+
+            blur_pass(image, _gb_out_image, 0);
+            blur_pass(_gb_out_image, _gb_out_image_2, 1);
+
+            for (int i = 1; i < blur_iterations; i++) {
+                blur_pass(_gb_out_image_2, _gb_out_image, 0);
+                blur_pass(_gb_out_image, _gb_out_image_2, 1);
             }
+
+            transition_image(cmd, _gb_out_image_2.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            transition_image(cmd, image.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+            VkExtent2D blit_src_extent = { _gb_out_image_2.extent.width, _gb_out_image_2.extent.height };
+            VkExtent2D blit_dst_extent = { image.extent.width, image.extent.height };
+            copy_image_to_image(cmd, _gb_out_image_2.image, image.image, blit_src_extent, blit_dst_extent);
+
+            transition_image(cmd, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            transition_image(cmd, _gb_out_image_2.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         }
 
         void _init_box_blur() {
@@ -1801,7 +1828,7 @@ namespace gvk {
             out_image_extent.height = static_cast<uint32_t>(w_height);
             out_image_extent.depth = 1;
 
-            out_image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+            out_image.format = VK_FORMAT_R8G8B8A8_SRGB;
             out_image.extent = out_image_extent;
             out_image.mipmaps = 1;
 
@@ -1919,7 +1946,7 @@ namespace gvk {
         sb_draw_image_extent.height = static_cast<uint32_t>(w_height);
         sb_draw_image_extent.depth = 1;
 
-        _skybox_draw_image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+        _skybox_draw_image.format = VK_FORMAT_R8G8B8A8_SRGB;
         _skybox_draw_image.extent = sb_draw_image_extent;
         _skybox_draw_image.mipmaps = 1;
 
@@ -1947,7 +1974,7 @@ namespace gvk {
         });
 
         // msaa for the skybox
-        _skybox_draw_image_msaa.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+        _skybox_draw_image_msaa.format = VK_FORMAT_R8G8B8A8_SRGB;
         _skybox_draw_image_msaa.extent = sb_draw_image_extent;
         _skybox_draw_image_msaa.mipmaps = 1;
         draw_image_usages = {};
@@ -2065,7 +2092,7 @@ namespace gvk {
         composite_image_extent.height = static_cast<uint32_t>(w_height);
         composite_image_extent.depth = 1;
 
-        _composite_image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+        _composite_image.format = VK_FORMAT_R8G8B8A8_SRGB;
         _composite_image.extent = composite_image_extent;
         _composite_image.mipmaps = 1;
 
@@ -2265,7 +2292,7 @@ namespace gvk {
         draw_image_extent.height = static_cast<uint32_t>(w_height);
         draw_image_extent.depth = 1;
 
-        _draw_image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+        _draw_image.format = VK_FORMAT_R8G8B8A8_SRGB;
         _draw_image.extent = draw_image_extent;
         _draw_image.mipmaps = 1;
 
@@ -2319,7 +2346,7 @@ namespace gvk {
         draw_image_extent.height = static_cast<uint32_t>(w_height);
         draw_image_extent.depth = 1;
 
-        _draw_image_msaa.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+        _draw_image_msaa.format = VK_FORMAT_R8G8B8A8_SRGB;
         _draw_image_msaa.extent = draw_image_extent;
         _draw_image_msaa.mipmaps = 1;
 
@@ -3151,7 +3178,6 @@ namespace gvk {
 
         _frame_number++;
     }
-
 
     void quit() {
         vkDeviceWaitIdle(_vk_device);
