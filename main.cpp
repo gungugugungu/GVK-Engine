@@ -53,6 +53,16 @@ int main() {
     AllocatedImage custom_texture = gvk::load_image("../custom.png").value();
     gvk::Surface leclerc_surface;
     leclerc_surface.load_from_file("../custom.jpg");
+    leclerc_surface.refresh();
+
+    gvk::main_post_processing_stack.gaussian_blur_radius = 4.0f;
+    gvk::main_post_processing_stack.gaussian_blur_sigma = 3.0f;
+
+    gvk::display.draw(leclerc_surface, {16, 16});
+    gvk::display.refresh();
+    gvk::immediate_submit([&](VkCommandBuffer cmd) {
+        gvk::main_post_processing_stack.gb_blur_image(cmd, gvk::display.vk_image, 1);
+    });
 
     gvk::load_skybox("../textures/skyboxes/night.png");
 

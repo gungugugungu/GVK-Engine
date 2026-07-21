@@ -1192,6 +1192,9 @@ namespace gvk {
     inline AllocatedImage _depth_image_msaa;
 
     void immediate_submit(function<void(VkCommandBuffer cmd)>&& function) {
+        vkWaitForFences(_vk_device, 1, &_imm_fence, VK_TRUE, UINT64_MAX);
+        vkResetFences(_vk_device, 1, &_imm_fence);
+
         VK_CHECK(vkResetFences(_vk_device, 1, &_imm_fence));
         VK_CHECK(vkResetCommandBuffer(_imm_command_buffer, 0));
 
@@ -1611,6 +1614,229 @@ namespace gvk {
 
     Surface display;
 
+    class PostProcessingStack {
+    public:
+        AllocatedImage out_image;
+
+        // vignette
+        // TODO: do this later
+
+        // gaussian_blur
+        AllocatedImage _gb_out_image;
+        VkPipeline _gb_pipeline;
+        VkPipelineLayout _gb_pipeline_layout;
+        VkDescriptorSetLayout _gbb_descriptor_layout;
+        int gaussian_blur_radius = 3;
+        float gaussian_blur_sigma = 2.5f;
+
+        struct GaussianBlurPushConstants {
+            int radius;
+            float sigma;
+            int is_vertical;
+        };
+
+        void _init_vignette() {
+
+        }
+
+        void _init_gaussian_blur() {
+            DescriptorLayoutBuilder builder;
+            builder.add_binding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            builder.add_binding(1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+            _gbb_descriptor_layout = builder.build(_vk_device, VK_SHADER_STAGE_FRAGMENT_BIT);
+
+            VkPushConstantRange blur_push_range{};
+            blur_push_range.offset = 0;
+            blur_push_range.size = sizeof(GaussianBlurPushConstants);
+            blur_push_range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+            VkPipelineLayoutCreateInfo layout_info = pipeline_layout_create_info();
+            layout_info.setLayoutCount = 1;
+            layout_info.pSetLayouts = &_gbb_descriptor_layout;
+            layout_info.pushConstantRangeCount = 1;
+            layout_info.pPushConstantRanges = &blur_push_range;
+            vkCreatePipelineLayout(_vk_device, &layout_info, nullptr, &_gb_pipeline_layout);
+
+            VkShaderModule vert_shader, frag_shader;
+            if (!load_shader_module("../shaders/fullscreen_triangle.vert.spv", _vk_device, &vert_shader)) {
+                cout << "error when loading guassian blur vert (aka fullscreen triangle) shader" << endl;
+            }
+            if (!load_shader_module("../shaders/gaussian_blur.frag.spv", _vk_device, &frag_shader)) {
+                cout << "error when loading gaussian blur frag shader" << endl;
+            }
+
+            PipelineBuilder pip_builder;
+            pip_builder._pipeline_layout = _gb_pipeline_layout;
+            pip_builder.set_shaders(vert_shader, frag_shader);
+            pip_builder.set_input_topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+            pip_builder.set_polygon_mode(VK_POLYGON_MODE_FILL);
+            pip_builder.set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE);
+            pip_builder.set_multisampling_none();
+            pip_builder.disable_blending();
+            pip_builder.disable_depthtest();
+            pip_builder.set_color_attachment_format(_draw_image.format);
+            _gb_pipeline = pip_builder.build_pipeline(_vk_device);
+
+            vkDestroyShaderModule(_vk_device, vert_shader, nullptr);
+            vkDestroyShaderModule(_vk_device, frag_shader, nullptr);
+
+            int w_width, w_height;
+            SDL_GetWindowSize(window, &w_width, &w_height);
+
+            VkExtent3D gb_out_extent = {};
+            gb_out_extent.width = static_cast<uint32_t>(w_width);
+            gb_out_extent.height = static_cast<uint32_t>(w_height);
+            gb_out_extent.depth = 1;
+
+            _gb_out_image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+            _gb_out_image.extent = gb_out_extent;
+            _gb_out_image.mipmaps = 1;
+
+            VkImageUsageFlags _gb_out_image_usages{};
+            _gb_out_image_usages |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+            _gb_out_image_usages |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            _gb_out_image_usages |= VK_IMAGE_USAGE_STORAGE_BIT;
+            _gb_out_image_usages |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+            _gb_out_image_usages |= VK_IMAGE_USAGE_SAMPLED_BIT;
+
+            VkImageCreateInfo rimg_info = image_create_info(_gb_out_image.format, _gb_out_image_usages, gb_out_extent);
+
+            VmaAllocationCreateInfo rimg_allocinfo = {};
+            rimg_allocinfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+            rimg_allocinfo.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+            vmaCreateImage(_allocator, &rimg_info, &rimg_allocinfo, &_gb_out_image.image, &_gb_out_image.allocation, nullptr);
+            VkImageViewCreateInfo rview_info = imageview_create_info(_gb_out_image.format, _gb_out_image.image, _gb_out_image.mipmaps, VK_IMAGE_ASPECT_COLOR_BIT);
+
+            VK_CHECK(vkCreateImageView(_vk_device, &rview_info, nullptr, &_gb_out_image.image_view));
+
+            _main_deletion_queue.push_function([&]() {
+                destroy_image(_gb_out_image);
+                vkDestroyPipelineLayout(_vk_device, _gb_pipeline_layout, nullptr);
+                vkDestroyPipeline(_vk_device, _gb_pipeline, nullptr);
+                vkDestroyDescriptorSetLayout(_vk_device, _gbb_descriptor_layout, nullptr);
+            });
+        }
+
+        void gb_blur_image(VkCommandBuffer cmd, AllocatedImage image, int blur_iterations) {
+            auto blur_pass = [&](AllocatedImage& src, AllocatedImage& dst, int is_vertical) {
+                transition_image(cmd, dst.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+                VkClearValue clear = { .color = { {0.f, 0.f, 0.f, 1.f} } };
+                VkRenderingAttachmentInfo color_attach = attachment_info(dst.image_view, &clear, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+                VkExtent2D dst_extent = { dst.extent.width, dst.extent.height };
+
+                VkRenderingInfo render_info = {};
+                render_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+                render_info.pNext = nullptr;
+                render_info.renderArea = VkRect2D{VkOffset2D{0, 0}, dst_extent};
+                render_info.layerCount = 1;
+                render_info.colorAttachmentCount = 1;
+                render_info.pColorAttachments = &color_attach;
+                render_info.pDepthAttachment = nullptr;
+                render_info.pStencilAttachment = nullptr;
+
+                vkCmdBeginRendering(cmd, &render_info);
+
+                VkViewport viewport = {};
+                viewport.x = 0;
+                viewport.y = 0;
+                viewport.width = static_cast<float>(dst_extent.width);
+                viewport.height = static_cast<float>(dst_extent.height);
+                viewport.minDepth = 0.f;
+                viewport.maxDepth = 1.f;
+                vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+                VkRect2D scissor = {};
+                scissor.offset = {0, 0};
+                scissor.extent = dst_extent;
+                vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _gb_pipeline);
+
+                VkDescriptorSet blur_set = get_current_frame()._frame_descriptors.allocate(_vk_device, _gbb_descriptor_layout, nullptr);
+                DescriptorWriter writer;
+                writer.write_image(0, src.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+                writer.update_set(_vk_device, blur_set);
+
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _gb_pipeline_layout, 0, 1, &blur_set, 0, nullptr);
+
+                GaussianBlurPushConstants push_constants{};
+                push_constants.radius = gaussian_blur_radius;
+                push_constants.sigma = gaussian_blur_sigma;
+                push_constants.is_vertical = is_vertical;
+                vkCmdPushConstants(cmd, _gb_pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(GaussianBlurPushConstants), &push_constants);
+
+                vkCmdDraw(cmd, 3, 1, 0, 0);
+
+                vkCmdEndRendering(cmd);
+
+                transition_image(cmd, dst.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            };
+
+            for (int i = 0; i < blur_iterations; i++) {
+                blur_pass(image, _gb_out_image, 0);
+                blur_pass(_gb_out_image, image, 1);
+            }
+        }
+
+        void _init_box_blur() {
+
+        }
+
+        void _init_bloom() {
+
+        }
+
+        void _init_tonemapping() {
+
+        }
+
+        void init() {
+            int w_width, w_height;
+            SDL_GetWindowSize(window, &w_width, &w_height);
+
+            VkExtent3D out_image_extent = {};
+            out_image_extent.width = static_cast<uint32_t>(w_width);
+            out_image_extent.height = static_cast<uint32_t>(w_height);
+            out_image_extent.depth = 1;
+
+            out_image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+            out_image.extent = out_image_extent;
+            out_image.mipmaps = 1;
+
+            VkImageUsageFlags out_image_usages{};
+            out_image_usages |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+            out_image_usages |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            out_image_usages |= VK_IMAGE_USAGE_STORAGE_BIT;
+            out_image_usages |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+            out_image_usages |= VK_IMAGE_USAGE_SAMPLED_BIT;
+
+            VkImageCreateInfo rimg_info = image_create_info(out_image.format, out_image_usages, out_image_extent);
+
+            VmaAllocationCreateInfo rimg_allocinfo = {};
+            rimg_allocinfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+            rimg_allocinfo.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+            vmaCreateImage(_allocator, &rimg_info, &rimg_allocinfo, &out_image.image, &out_image.allocation, nullptr);
+            VkImageViewCreateInfo rview_info = imageview_create_info(out_image.format, out_image.image, out_image.mipmaps, VK_IMAGE_ASPECT_COLOR_BIT);
+
+            VK_CHECK(vkCreateImageView(_vk_device, &rview_info, nullptr, &out_image.image_view));
+
+            _main_deletion_queue.push_function([&]() {
+                destroy_image(out_image);
+            });
+
+            _init_vignette();
+            _init_gaussian_blur();
+            _init_box_blur();
+            _init_bloom();
+            _init_tonemapping();
+        }
+    };
+
+    PostProcessingStack main_post_processing_stack;
+
     struct Material {
         AllocatedImage albedo_map;
         AllocatedImage normal_map;
@@ -1803,7 +2029,7 @@ namespace gvk {
         vkCreatePipelineLayout(_vk_device, &layout_info, nullptr, &_composite_pipeline_layout);
 
         VkShaderModule vert_shader, frag_shader;
-        if (!load_shader_module("../shaders/composite.vert.spv", _vk_device, &vert_shader)) {
+        if (!load_shader_module("../shaders/fullscreen_triangle.vert.spv", _vk_device, &vert_shader)) {
             cout << "error when loading composite vert shader" << endl;
         }
         if (!load_shader_module("../shaders/composite.frag.spv", _vk_device, &frag_shader)) {
@@ -2471,7 +2697,7 @@ namespace gvk {
             {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1}
         };
 
-        global_descriptor_allocator.init_pool(_vk_device, 10, sizes);
+        global_descriptor_allocator.init_pool(_vk_device, 20, sizes);
 
         {
             DescriptorLayoutBuilder builder;
@@ -2484,18 +2710,12 @@ namespace gvk {
             builder.add_binding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
             _gpu_scene_data_descriptor_layout = builder.build(_vk_device, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
         }
-        _main_deletion_queue.push_function([&]() {
-            vkDestroyDescriptorSetLayout(_vk_device, _gpu_scene_data_descriptor_layout, nullptr);
-        });
 
         {
             DescriptorLayoutBuilder builder;
             builder.add_binding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
             _single_image_descriptor_layout = builder.build(_vk_device, VK_SHADER_STAGE_FRAGMENT_BIT);
         }
-        _main_deletion_queue.push_function([&]() {
-            vkDestroyDescriptorSetLayout(_vk_device, _single_image_descriptor_layout, nullptr);
-        });
 
         _draw_image_descriptors = global_descriptor_allocator.allocate(_vk_device, _draw_image_descriptor_layout);
         DescriptorWriter writer;
@@ -2507,6 +2727,8 @@ namespace gvk {
            global_descriptor_allocator.destroy_pool(_vk_device);
 
             vkDestroyDescriptorSetLayout(_vk_device, _draw_image_descriptor_layout, nullptr);
+            vkDestroyDescriptorSetLayout(_vk_device, _gpu_scene_data_descriptor_layout, nullptr);
+            vkDestroyDescriptorSetLayout(_vk_device, _single_image_descriptor_layout, nullptr);
         });
 
         for (int i = 0; i < FRAME_OVERLAP; i++) {
@@ -2842,6 +3064,7 @@ namespace gvk {
         init_composite();
         init_2d();
         init_msaa();
+        main_post_processing_stack.init();
     }
 
     void draw() {
