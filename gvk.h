@@ -1635,12 +1635,20 @@ namespace gvk {
         int gaussian_blur_radius = 4;
         float gaussian_blur_sigma = 3.f;
 
+        // box blur
         AllocatedImage _bb_out_image;
         AllocatedImage _bb_out_image_2;
         VkPipeline _bb_pipeline;
         VkPipelineLayout _bb_pipeline_layout;
         VkDescriptorSetLayout _bb_descriptor_layout;
         int box_blur_radius = 4;
+
+        // bloom
+        AllocatedImage _bloom_filter_image;
+        VkPipeline _bloom_pipeline;
+        VkPipelineLayout _bloom_pipeline_layout;
+        VkDescriptorSetLayout _bloom_descriptor_layout;
+        float bloom_filter_threshold;
 
         struct VignettePushConstants {
             float strength;

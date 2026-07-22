@@ -27,6 +27,14 @@ But don't mistake it, this is not a game engine, this is just a renderer, someth
 - Physically-based rendering
 - Shadowmapping
 
+## AI disclosure
+AI is a useful tool for learning something, but I realized if I use it for anything more, it becomes something that removes the fun from programming for me. That's why I only use AI in 3 cases:
+1. hard maths that I can't figure out on my own, so I use it as a math teacher
+2. this one occured a lot more when I started this project, now it's starting to disappear, and it's me asking AI to tell me what the equivalent of a sokol api function is in the vulkan api.
+3. Writing shaders are really hard, mostly because of the hard maths. Many of the shaders were written by an AI in this project, but that's a really small part that I really don't want to do.
+
+That's it, just a learning tool. (also, I did have it write 1 function in the entire code, and that is because I wrote the entire thing for my last engine and I was lazy to translate it to my new systems, so I just asked it to do it, I think that was for the better)
+
 ## External projects used:
 - [Vulkan](https://vulkan.lunarg.com/)
 - [SDL3](https://github.com/libsdl-org/SDL)
