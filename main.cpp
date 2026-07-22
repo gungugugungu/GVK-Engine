@@ -55,9 +55,8 @@ int main() {
     leclerc_surface.load_from_file("../custom.jpg");
     leclerc_surface.refresh();
 
-    gvk::main_post_processing_stack.gaussian_blur_radius = 4.0f;
-    gvk::main_post_processing_stack.box_blur_radius = 4.0f;
-    gvk::main_post_processing_stack.gaussian_blur_sigma = 3.0f;
+    gvk::main_post_processing_stack.vignette_radius = 0.8f;
+    gvk::main_post_processing_stack.vignette_strength = 0.5f;
 
     gvk::display.clear(1920, 1080, {1, 1, 1, 0});
     gvk::display.draw(leclerc_surface, {16, 16});
