@@ -1645,10 +1645,17 @@ namespace gvk {
 
         // bloom
         AllocatedImage _bloom_filter_image;
+        AllocatedImage _bloom_comp_image;
         VkPipeline _bloom_pipeline;
         VkPipelineLayout _bloom_pipeline_layout;
         VkDescriptorSetLayout _bloom_descriptor_layout;
-        float bloom_filter_threshold;
+        VkPipeline _bloom_comp_pipeline;
+        VkPipelineLayout _bloom_comp_pipeline_layout;
+        VkDescriptorSetLayout _bloom_comp_descriptor_layout;
+        float bloom_filter_threshold = 0.8f;
+        float bloom_filter_knee = 0.2f;
+        int bloom_blur_passes = 4;
+        float bloom_intensity = 1.f;
 
         struct VignettePushConstants {
             float strength;
@@ -1703,7 +1710,7 @@ namespace gvk {
             vn_out_extent.height = static_cast<uint32_t>(w_height);
             vn_out_extent.depth = 1;
 
-            _vn_out_image.format = VK_FORMAT_R8G8B8A8_SRGB;
+            _vn_out_image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
             _vn_out_image.extent = vn_out_extent;
             _vn_out_image.mipmaps = 1;
 
@@ -1851,7 +1858,7 @@ namespace gvk {
             gb_out_extent.height = static_cast<uint32_t>(w_height);
             gb_out_extent.depth = 1;
 
-            _gb_out_image.format = VK_FORMAT_R8G8B8A8_SRGB;
+            _gb_out_image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
             _gb_out_image.extent = gb_out_extent;
             _gb_out_image.mipmaps = 1;
 
@@ -1873,7 +1880,7 @@ namespace gvk {
 
             VK_CHECK(vkCreateImageView(_vk_device, &rview_info, nullptr, &_gb_out_image.image_view));
 
-            _gb_out_image_2.format = VK_FORMAT_R8G8B8A8_SRGB;
+            _gb_out_image_2.format = VK_FORMAT_R16G16B16A16_SFLOAT;
             _gb_out_image_2.extent = gb_out_extent;
             _gb_out_image_2.mipmaps = 1;
 
@@ -2023,7 +2030,7 @@ namespace gvk {
             bb_out_extent.height = static_cast<uint32_t>(w_height);
             bb_out_extent.depth = 1;
 
-            _bb_out_image.format = VK_FORMAT_R8G8B8A8_SRGB;
+            _bb_out_image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
             _bb_out_image.extent = bb_out_extent;
             _bb_out_image.mipmaps = 1;
 
@@ -2045,7 +2052,7 @@ namespace gvk {
 
             VK_CHECK(vkCreateImageView(_vk_device, &rview_info, nullptr, &_bb_out_image.image_view));
 
-            _bb_out_image_2.format = VK_FORMAT_R8G8B8A8_SRGB;
+            _bb_out_image_2.format = VK_FORMAT_R16G16B16A16_SFLOAT;
             _bb_out_image_2.extent = bb_out_extent;
             _bb_out_image_2.mipmaps = 1;
 
@@ -2141,8 +2148,259 @@ namespace gvk {
             transition_image(cmd, _bb_out_image_2.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         }
 
-        void _init_bloom() {
+        struct BloomPushConstants {
+            float threshold;
+            float knee;
+        };
 
+        struct BloomCompPushConstants {
+            float intensity;
+        };
+
+        void _init_bloom() {
+            DescriptorLayoutBuilder builder;
+            builder.add_binding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            _bloom_descriptor_layout = builder.build(_vk_device, VK_SHADER_STAGE_FRAGMENT_BIT);
+
+            VkPushConstantRange bloom_push_range{};
+            bloom_push_range.offset = 0;
+            bloom_push_range.size = sizeof(BloomPushConstants);
+            bloom_push_range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+            VkPipelineLayoutCreateInfo layout_info = pipeline_layout_create_info();
+            layout_info.setLayoutCount = 1;
+            layout_info.pSetLayouts = &_bloom_descriptor_layout;
+            layout_info.pushConstantRangeCount = 1;
+            layout_info.pPushConstantRanges = &bloom_push_range;
+            vkCreatePipelineLayout(_vk_device, &layout_info, nullptr, &_bloom_pipeline_layout);
+
+            VkShaderModule vert_shader, frag_shader;
+            if (!load_shader_module("../shaders/fullscreen_triangle.vert.spv", _vk_device, &vert_shader)) {
+                cout << "error when loading bloom vert (aka fullscreen triangle) shader" << endl;
+            }
+            if (!load_shader_module("../shaders/bloom_filter.frag.spv", _vk_device, &frag_shader)) {
+                cout << "error when loading bloom frag shader" << endl;
+            }
+
+            PipelineBuilder pip_builder;
+            pip_builder._pipeline_layout = _bloom_pipeline_layout;
+            pip_builder.set_shaders(vert_shader, frag_shader);
+            pip_builder.set_input_topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+            pip_builder.set_polygon_mode(VK_POLYGON_MODE_FILL);
+            pip_builder.set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE);
+            pip_builder.set_multisampling_none();
+            pip_builder.disable_blending();
+            pip_builder.disable_depthtest();
+            pip_builder.set_color_attachment_format(_draw_image.format);
+            _bloom_pipeline = pip_builder.build_pipeline(_vk_device);
+
+            vkDestroyShaderModule(_vk_device, vert_shader, nullptr);
+            vkDestroyShaderModule(_vk_device, frag_shader, nullptr);
+
+            int w_width, w_height;
+            SDL_GetWindowSize(window, &w_width, &w_height);
+
+            VkExtent3D bloom_out_extent = {};
+            bloom_out_extent.width = static_cast<uint32_t>(w_width);
+            bloom_out_extent.height = static_cast<uint32_t>(w_height);
+            bloom_out_extent.depth = 1;
+
+            _bloom_filter_image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+            _bloom_filter_image.extent = bloom_out_extent;
+            _bloom_filter_image.mipmaps = 1;
+
+            VkImageUsageFlags _bloom_out_image_usages{};
+            _bloom_out_image_usages |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+            _bloom_out_image_usages |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            _bloom_out_image_usages |= VK_IMAGE_USAGE_STORAGE_BIT;
+            _bloom_out_image_usages |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+            _bloom_out_image_usages |= VK_IMAGE_USAGE_SAMPLED_BIT;
+
+            VkImageCreateInfo rimg_info = image_create_info(_bloom_filter_image.format, _bloom_out_image_usages, bloom_out_extent);
+
+            VmaAllocationCreateInfo rimg_allocinfo = {};
+            rimg_allocinfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+            rimg_allocinfo.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+            vmaCreateImage(_allocator, &rimg_info, &rimg_allocinfo, &_bloom_filter_image.image, &_bloom_filter_image.allocation, nullptr);
+            VkImageViewCreateInfo rview_info = imageview_create_info(_bloom_filter_image.format, _bloom_filter_image.image, _bloom_filter_image.mipmaps, VK_IMAGE_ASPECT_COLOR_BIT);
+
+            VK_CHECK(vkCreateImageView(_vk_device, &rview_info, nullptr, &_bloom_filter_image.image_view));
+
+            _main_deletion_queue.push_function([&]() {
+                destroy_image(_bloom_filter_image);
+                vkDestroyPipelineLayout(_vk_device, _bloom_pipeline_layout, nullptr);
+                vkDestroyPipeline(_vk_device, _bloom_pipeline, nullptr);
+                vkDestroyDescriptorSetLayout(_vk_device, _bloom_descriptor_layout, nullptr);
+            });
+
+            // bloom composite
+            DescriptorLayoutBuilder comp_builder;
+            comp_builder.add_binding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            comp_builder.add_binding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            _bloom_comp_descriptor_layout = comp_builder.build(_vk_device, VK_SHADER_STAGE_FRAGMENT_BIT);
+
+            VkPushConstantRange bloom_comp_push_range{};
+            bloom_comp_push_range.offset = 0;
+            bloom_comp_push_range.size = sizeof(BloomCompPushConstants);
+            bloom_comp_push_range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+            VkPipelineLayoutCreateInfo comp_layout_info = pipeline_layout_create_info();
+            comp_layout_info.setLayoutCount = 1;
+            comp_layout_info.pSetLayouts = &_bloom_comp_descriptor_layout;
+            comp_layout_info.pushConstantRangeCount = 1;
+            comp_layout_info.pPushConstantRanges = &bloom_comp_push_range;
+            vkCreatePipelineLayout(_vk_device, &comp_layout_info, nullptr, &_bloom_comp_pipeline_layout);
+
+            VkShaderModule comp_vert_shader, comp_frag_shader;
+            if (!load_shader_module("../shaders/fullscreen_triangle.vert.spv", _vk_device, &comp_vert_shader)) {
+                cout << "error when loading bloom comp vert (aka fullscreen triangle) shader" << endl;
+            }
+            if (!load_shader_module("../shaders/bloom_composite.frag.spv", _vk_device, &comp_frag_shader)) {
+                cout << "error when loading bloom comp frag shader" << endl;
+            }
+
+            PipelineBuilder comp_pip_builder;
+            comp_pip_builder._pipeline_layout = _bloom_comp_pipeline_layout;
+            comp_pip_builder.set_shaders(comp_vert_shader, comp_frag_shader);
+            comp_pip_builder.set_input_topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+            comp_pip_builder.set_polygon_mode(VK_POLYGON_MODE_FILL);
+            comp_pip_builder.set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE);
+            comp_pip_builder.set_multisampling_none();
+            comp_pip_builder.disable_blending();
+            comp_pip_builder.disable_depthtest();
+            comp_pip_builder.set_color_attachment_format(_draw_image.format);
+            _bloom_comp_pipeline = comp_pip_builder.build_pipeline(_vk_device);
+
+            vkDestroyShaderModule(_vk_device, comp_vert_shader, nullptr);
+            vkDestroyShaderModule(_vk_device, comp_frag_shader, nullptr);
+
+            _bloom_comp_image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+            _bloom_comp_image.extent = bloom_out_extent;
+            _bloom_comp_image.mipmaps = 1;
+
+            VkImageCreateInfo cimg_info = image_create_info(_bloom_comp_image.format, _bloom_out_image_usages, bloom_out_extent);
+
+            VmaAllocationCreateInfo cimg_allocinfo = {};
+            cimg_allocinfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+            cimg_allocinfo.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+            vmaCreateImage(_allocator, &cimg_info, &cimg_allocinfo, &_bloom_comp_image.image, &_bloom_comp_image.allocation, nullptr);
+            VkImageViewCreateInfo cview_info = imageview_create_info(_bloom_comp_image.format, _bloom_comp_image.image, _bloom_comp_image.mipmaps, VK_IMAGE_ASPECT_COLOR_BIT);
+
+            VK_CHECK(vkCreateImageView(_vk_device, &cview_info, nullptr, &_bloom_comp_image.image_view));
+
+            _main_deletion_queue.push_function([&]() {
+                destroy_image(_bloom_comp_image);
+                vkDestroyPipelineLayout(_vk_device, _bloom_pipeline_layout, nullptr);
+                vkDestroyPipeline(_vk_device, _bloom_pipeline, nullptr);
+                vkDestroyDescriptorSetLayout(_vk_device, _bloom_descriptor_layout, nullptr);
+            });
+        }
+
+        void apply_bloom(VkCommandBuffer cmd, AllocatedImage image) {
+            transition_image(cmd, _bloom_filter_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+            VkClearValue clear = { .color = { {0.f, 0.f, 0.f, 1.f} } };
+            VkRenderingAttachmentInfo color_attach = attachment_info(_bloom_filter_image.image_view, &clear, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+            VkExtent2D dst_extent = { _bloom_filter_image.extent.width, _bloom_filter_image.extent.height };
+
+            VkRenderingInfo render_info = {};
+            render_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+            render_info.pNext = nullptr;
+            render_info.renderArea = VkRect2D{VkOffset2D{0, 0}, dst_extent};
+            render_info.layerCount = 1;
+            render_info.colorAttachmentCount = 1;
+            render_info.pColorAttachments = &color_attach;
+            render_info.pDepthAttachment = nullptr;
+            render_info.pStencilAttachment = nullptr;
+
+            vkCmdBeginRendering(cmd, &render_info);
+
+            VkViewport viewport = {};
+            viewport.x = 0;
+            viewport.y = 0;
+            viewport.width = static_cast<float>(dst_extent.width);
+            viewport.height = static_cast<float>(dst_extent.height);
+            viewport.minDepth = 0.f;
+            viewport.maxDepth = 1.f;
+            vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+            VkRect2D scissor = {};
+            scissor.offset = {0, 0};
+            scissor.extent = dst_extent;
+            vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _bloom_pipeline);
+
+            VkDescriptorSet bloom_set = get_current_frame()._frame_descriptors.allocate(_vk_device, _bloom_descriptor_layout, nullptr);
+            DescriptorWriter writer;
+            writer.write_image(0, image.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            writer.update_set(_vk_device, bloom_set);
+
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _bloom_pipeline_layout, 0, 1, &bloom_set, 0, nullptr);
+
+            BloomPushConstants push_constants{};
+            push_constants.threshold = bloom_filter_threshold;
+            push_constants.knee = bloom_filter_knee;
+            vkCmdPushConstants(cmd, _bloom_pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(BloomPushConstants), &push_constants);
+
+            vkCmdDraw(cmd, 3, 1, 0, 0);
+
+            vkCmdEndRendering(cmd);
+
+            transition_image(cmd, _bloom_filter_image.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+            blur_image(cmd, _bloom_filter_image, bloom_blur_passes);
+
+            // composite
+            transition_image(cmd, _bloom_comp_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+            VkRenderingAttachmentInfo comp_color_attach = attachment_info(_bloom_comp_image.image_view, &clear, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+            VkRenderingInfo comp_render_info = {};
+            comp_render_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+            comp_render_info.pNext = nullptr;
+            comp_render_info.renderArea = VkRect2D{VkOffset2D{0, 0}, dst_extent};
+            comp_render_info.layerCount = 1;
+            comp_render_info.colorAttachmentCount = 1;
+            comp_render_info.pColorAttachments = &comp_color_attach;
+            comp_render_info.pDepthAttachment = nullptr;
+            comp_render_info.pStencilAttachment = nullptr;
+
+            vkCmdBeginRendering(cmd, &comp_render_info);
+
+            vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+            vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _bloom_comp_pipeline);
+
+            VkDescriptorSet bloom_comp_set = get_current_frame()._frame_descriptors.allocate(_vk_device, _bloom_comp_descriptor_layout, nullptr);
+            DescriptorWriter comp_writer;
+            comp_writer.write_image(0, image.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            comp_writer.write_image(1, _bloom_filter_image.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            comp_writer.update_set(_vk_device, bloom_comp_set);
+
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _bloom_comp_pipeline_layout, 0, 1, &bloom_comp_set, 0, nullptr);
+
+            BloomCompPushConstants comp_push_constants{};
+            comp_push_constants.intensity = bloom_intensity;
+            vkCmdPushConstants(cmd, _bloom_comp_pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(BloomCompPushConstants), &comp_push_constants);
+
+            vkCmdDraw(cmd, 3, 1, 0, 0);
+
+            vkCmdEndRendering(cmd);
+
+            transition_image(cmd, _bloom_comp_image.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            transition_image(cmd, image.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+            VkExtent2D blit_src_extent = { _bloom_comp_image.extent.width, _bloom_comp_image.extent.height };
+            VkExtent2D blit_dst_extent = { image.extent.width, image.extent.height };
+            copy_image_to_image(cmd, _bloom_comp_image.image, image.image, blit_src_extent, blit_dst_extent);
+
+            transition_image(cmd, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            transition_image(cmd, _bloom_comp_image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         }
 
         void _init_tonemapping() {
@@ -2158,7 +2416,7 @@ namespace gvk {
             out_image_extent.height = static_cast<uint32_t>(w_height);
             out_image_extent.depth = 1;
 
-            out_image.format = VK_FORMAT_R8G8B8A8_SRGB;
+            out_image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
             out_image.extent = out_image_extent;
             out_image.mipmaps = 1;
 
@@ -2276,7 +2534,7 @@ namespace gvk {
         sb_draw_image_extent.height = static_cast<uint32_t>(w_height);
         sb_draw_image_extent.depth = 1;
 
-        _skybox_draw_image.format = VK_FORMAT_R8G8B8A8_SRGB;
+        _skybox_draw_image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
         _skybox_draw_image.extent = sb_draw_image_extent;
         _skybox_draw_image.mipmaps = 1;
 
@@ -2304,7 +2562,7 @@ namespace gvk {
         });
 
         // msaa for the skybox
-        _skybox_draw_image_msaa.format = VK_FORMAT_R8G8B8A8_SRGB;
+        _skybox_draw_image_msaa.format = VK_FORMAT_R16G16B16A16_SFLOAT;
         _skybox_draw_image_msaa.extent = sb_draw_image_extent;
         _skybox_draw_image_msaa.mipmaps = 1;
         draw_image_usages = {};
@@ -2422,7 +2680,7 @@ namespace gvk {
         composite_image_extent.height = static_cast<uint32_t>(w_height);
         composite_image_extent.depth = 1;
 
-        _composite_image.format = VK_FORMAT_R8G8B8A8_SRGB;
+        _composite_image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
         _composite_image.extent = composite_image_extent;
         _composite_image.mipmaps = 1;
 
@@ -2621,7 +2879,7 @@ namespace gvk {
         draw_image_extent.height = static_cast<uint32_t>(w_height);
         draw_image_extent.depth = 1;
 
-        _draw_image.format = VK_FORMAT_R8G8B8A8_SRGB;
+        _draw_image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
         _draw_image.extent = draw_image_extent;
         _draw_image.mipmaps = 1;
 
@@ -2675,7 +2933,7 @@ namespace gvk {
         draw_image_extent.height = static_cast<uint32_t>(w_height);
         draw_image_extent.depth = 1;
 
-        _draw_image_msaa.format = VK_FORMAT_R8G8B8A8_SRGB;
+        _draw_image_msaa.format = VK_FORMAT_R16G16B16A16_SFLOAT;
         _draw_image_msaa.extent = draw_image_extent;
         _draw_image_msaa.mipmaps = 1;
 
@@ -3466,10 +3724,13 @@ namespace gvk {
 
         draw_composite_pass(cmd);
 
+        transition_image(cmd, _composite_image.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        main_post_processing_stack.apply_bloom(cmd, _composite_image);
+
         render_queue.clear();
 
         // blit to swapchain
-        transition_image(cmd, _composite_image.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        transition_image(cmd, _composite_image.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
         transition_image(cmd, _swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
         copy_image_to_image(cmd, _composite_image.image, _swapchain_images[swapchain_image_index], _draw_extent, _swapchain_extent);
