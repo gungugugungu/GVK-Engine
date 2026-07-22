@@ -27,7 +27,7 @@ But don't mistake it, this is not a game engine, this is just a renderer, someth
 - Physically-based rendering
 - Shadowmapping
 
-### External projects used:
+## External projects used:
 - [Vulkan](https://vulkan.lunarg.com/)
 - [SDL3](https://github.com/libsdl-org/SDL)
 - [vk-bootstrap](https://github.com/charles-lunarg/vk-bootstrap)

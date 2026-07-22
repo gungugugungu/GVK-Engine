@@ -3458,11 +3458,6 @@ namespace gvk {
 
         draw_composite_pass(cmd);
 
-        transition_image(cmd, _composite_image.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        main_post_processing_stack.apply_vignette(cmd, _composite_image);
-        transition_image(cmd, _composite_image.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-        vkDeviceWaitIdle(_vk_device);
-
         render_queue.clear();
 
         // blit to swapchain
