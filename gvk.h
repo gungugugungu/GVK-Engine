@@ -1657,6 +1657,34 @@ namespace gvk {
         int bloom_blur_passes = 4;
         float bloom_intensity = 1.f;
 
+        // tonemapping
+        AllocatedImage _tonemap_out_image;
+        VkPipeline _tonemap_pipeline;
+        VkPipelineLayout _tonemap_pipeline_layout;
+        VkDescriptorSetLayout _tonemap_descriptor_layout;
+
+        struct TonemapPushConstants {
+            float temp = 0.f;
+            float tint = 0.f;
+            float exposure = 1.f;
+            float contrast = 1.f;
+            float saturation = 1.05f;
+            float highlights = 0.f;
+            float midtones = 0.f;
+            float shadows = 0.f;
+            float whites = 0.f;
+            float blacks = 0.f;
+            float vibrance = 1.1f;
+            int op = 0; // 0 Reinhard, 1 Uncharted2, 2 ACES
+        };
+
+        TonemapPushConstants tonemap_values;
+
+        // pipeline
+        bool vignette_enabled = true;
+        bool bloom_enabled = true;
+        bool tonemapping_enabled = true;
+
         struct VignettePushConstants {
             float strength;
             float radius;
@@ -2404,7 +2432,107 @@ namespace gvk {
         }
 
         void _init_tonemapping() {
+            DescriptorLayoutBuilder builder;
+            builder.add_binding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            _tonemap_descriptor_layout = builder.build(_vk_device, VK_SHADER_STAGE_FRAGMENT_BIT);
 
+            VkPushConstantRange push_range{};
+            push_range.offset = 0;
+            push_range.size = sizeof(TonemapPushConstants);
+            push_range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+            VkPipelineLayoutCreateInfo layout_info = pipeline_layout_create_info();
+            layout_info.setLayoutCount = 1;
+            layout_info.pSetLayouts = &_tonemap_descriptor_layout;
+            layout_info.pushConstantRangeCount = 1;
+            layout_info.pPushConstantRanges = &push_range;
+            vkCreatePipelineLayout(_vk_device, &layout_info, nullptr, &_tonemap_pipeline_layout);
+
+            VkShaderModule vert, frag;
+            if (!load_shader_module("../shaders/fullscreen_triangle.vert.spv", _vk_device, &vert)) {
+                cout << "error when loading tonemap vert (aka fullscreen triangle) shader" << endl;
+            }
+            if (!load_shader_module("../shaders/tonemapping.frag.spv", _vk_device, &frag)) {
+                cout << "error when loading tonemap frag shader" << endl;
+            }
+
+            PipelineBuilder pb;
+            pb._pipeline_layout = _tonemap_pipeline_layout;
+            pb.set_shaders(vert, frag);
+            pb.set_input_topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+            pb.set_polygon_mode(VK_POLYGON_MODE_FILL);
+            pb.set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE);
+            pb.set_multisampling_none();
+            pb.disable_blending();
+            pb.disable_depthtest();
+            pb.set_color_attachment_format(VK_FORMAT_R8G8B8A8_SRGB);
+
+            _tonemap_pipeline = pb.build_pipeline(_vk_device);
+
+            vkDestroyShaderModule(_vk_device, vert, nullptr);
+            vkDestroyShaderModule(_vk_device, frag, nullptr);
+
+            int w, h;
+            SDL_GetWindowSize(window, &w, &h);
+            VkExtent3D extent = { static_cast<uint32_t>(w), static_cast<uint32_t>(h), 1 };
+
+            _tonemap_out_image.format = VK_FORMAT_R8G8B8A8_SRGB;
+            _tonemap_out_image.extent = extent;
+            _tonemap_out_image.mipmaps = 1;
+
+            VkImageUsageFlags usages = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+            VkImageCreateInfo img_info = image_create_info(_tonemap_out_image.format, usages, extent);
+
+            VmaAllocationCreateInfo alloc_info{};
+            alloc_info.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+            vmaCreateImage(_allocator, &img_info, &alloc_info, &_tonemap_out_image.image, &_tonemap_out_image.allocation, nullptr);
+
+            VkImageViewCreateInfo view_info = imageview_create_info(_tonemap_out_image.format, _tonemap_out_image.image, _tonemap_out_image.mipmaps, VK_IMAGE_ASPECT_COLOR_BIT);
+            vkCreateImageView(_vk_device, &view_info, nullptr, &_tonemap_out_image.image_view);
+
+            _main_deletion_queue.push_function([&]() {
+                destroy_image(_tonemap_out_image);
+                vkDestroyPipeline(_vk_device, _tonemap_pipeline, nullptr);
+                vkDestroyPipelineLayout(_vk_device, _tonemap_pipeline_layout, nullptr);
+                vkDestroyDescriptorSetLayout(_vk_device, _tonemap_descriptor_layout, nullptr);
+            });
+        }
+
+        void apply_tonemapping(VkCommandBuffer cmd, AllocatedImage& image) {
+            transition_image(cmd, _tonemap_out_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+            VkClearValue clear{ .color = {{0,0,0,1}} };
+            VkRenderingAttachmentInfo attach = attachment_info(_tonemap_out_image.image_view, &clear, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+            VkExtent2D extent = {_tonemap_out_image.extent.width, _tonemap_out_image.extent.height};
+
+            VkRenderingInfo render_info{};
+            render_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+            render_info.renderArea = {{0,0}, extent};
+            render_info.layerCount = 1;
+            render_info.colorAttachmentCount = 1;
+            render_info.pColorAttachments = &attach;
+
+            vkCmdBeginRendering(cmd, &render_info);
+
+            VkViewport vp = {0, 0, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.f, 1.f};
+            VkRect2D scissor = {{0,0}, extent};
+            vkCmdSetViewport(cmd, 0, 1, &vp);
+            vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _tonemap_pipeline);
+
+            VkDescriptorSet set = get_current_frame()._frame_descriptors.allocate(_vk_device, _tonemap_descriptor_layout);
+            DescriptorWriter writer;
+            writer.write_image(0, image.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            writer.update_set(_vk_device, set);
+
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _tonemap_pipeline_layout, 0, 1, &set, 0, nullptr);
+
+            vkCmdPushConstants(cmd, _tonemap_pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(TonemapPushConstants), &tonemap_values);
+
+            vkCmdDraw(cmd, 3, 1, 0, 0);
+
+            vkCmdEndRendering(cmd);
         }
 
         void init() {
@@ -2416,7 +2544,7 @@ namespace gvk {
             out_image_extent.height = static_cast<uint32_t>(w_height);
             out_image_extent.depth = 1;
 
-            out_image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+            out_image.format = VK_FORMAT_R8G8B8A8_SRGB;
             out_image.extent = out_image_extent;
             out_image.mipmaps = 1;
 
@@ -2447,6 +2575,33 @@ namespace gvk {
             _init_box_blur();
             _init_bloom();
             _init_tonemapping();
+        }
+
+        void run_pass(VkCommandBuffer cmd, AllocatedImage image) {
+            if (bloom_enabled) apply_bloom(cmd, image);
+            if (vignette_enabled) apply_vignette(cmd, image);
+            if (tonemapping_enabled) {
+                apply_tonemapping(cmd, image);
+                transition_image(cmd, _tonemap_out_image.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+                transition_image(cmd, out_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+                VkExtent2D blit_src_extent = { _tonemap_out_image.extent.width, _tonemap_out_image.extent.height };
+                VkExtent2D blit_dst_extent = {out_image.extent.width, out_image.extent.height};
+                copy_image_to_image(cmd, _tonemap_out_image.image, out_image.image, blit_src_extent, blit_dst_extent);
+
+                transition_image(cmd, _tonemap_out_image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+                transition_image(cmd, out_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            } else {
+                transition_image(cmd, image.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+                transition_image(cmd, out_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+                VkExtent2D blit_src_extent = { image.extent.width, image.extent.height };
+                VkExtent2D blit_dst_extent = {out_image.extent.width, out_image.extent.height};
+                copy_image_to_image(cmd, image.image, out_image.image, blit_src_extent, blit_dst_extent);
+
+                transition_image(cmd, image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                transition_image(cmd, out_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            }
         }
     };
 
@@ -3724,16 +3879,17 @@ namespace gvk {
 
         draw_composite_pass(cmd);
 
+        // post-processing
         transition_image(cmd, _composite_image.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        main_post_processing_stack.apply_bloom(cmd, _composite_image);
+        main_post_processing_stack.run_pass(cmd, _composite_image);
 
         render_queue.clear();
 
         // blit to swapchain
-        transition_image(cmd, _composite_image.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        transition_image(cmd, main_post_processing_stack.out_image.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
         transition_image(cmd, _swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
-        copy_image_to_image(cmd, _composite_image.image, _swapchain_images[swapchain_image_index], _draw_extent, _swapchain_extent);
+        copy_image_to_image(cmd, main_post_processing_stack.out_image.image, _swapchain_images[swapchain_image_index], _draw_extent, _swapchain_extent);
         transition_image(cmd, _swapchain_images[swapchain_image_index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
         draw_imgui(cmd, _swapchain_image_views[swapchain_image_index]);

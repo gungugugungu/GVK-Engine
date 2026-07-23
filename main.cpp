@@ -37,13 +37,6 @@ TODO FEATURES:
     - draw_mesh_instanced api
     - write the shader for it (gl_InstanceIndex)
     - move to indirect drawing so the instance count can eventually come from gpu-side data
- - 6. post processing stack
-    - fullscreen traingle pipeline
-    - HDR tonemapping
-    - guassian blur api
-    - box blur api
-    - bloom
-    - vignette
 */
 
 int main() {
@@ -58,9 +51,6 @@ int main() {
     gvk::display.clear(1920, 1080, {1, 1, 1, 0});
     gvk::display.draw(leclerc_surface, {16, 16});
     gvk::display.refresh();
-    gvk::immediate_submit([&](VkCommandBuffer cmd) {
-        gvk::main_post_processing_stack.blur_image(cmd, gvk::display.vk_image, 4);
-    });
 
     gvk::load_skybox("../textures/skyboxes/night.png");
 
@@ -71,6 +61,7 @@ int main() {
     const float sensitivity = 0.1f;
     const float speed = 5.f;
     bool mouse_captured = false;
+    bool rmb_down = false;
 
     Uint64 last_time = SDL_GetTicks();
 
@@ -93,6 +84,18 @@ int main() {
                     mouse_captured = true;
                     SDL_SetWindowRelativeMouseMode(gvk::window, true);
                 }
+                if (e.button.button == SDL_BUTTON_RIGHT) {
+                    rmb_down = true;
+                    SDL_SetWindowRelativeMouseMode(gvk::window, true);
+                    SDL_HideCursor();
+                }
+            }
+            if (e.type == SDL_EVENT_MOUSE_BUTTON_UP) {
+                if (e.button.button == SDL_BUTTON_RIGHT) {
+                    rmb_down = false;
+                    SDL_SetWindowRelativeMouseMode(gvk::window, false);
+                    SDL_ShowCursor();
+                }
             }
             if (e.type == SDL_EVENT_KEY_DOWN && e.key.key == SDLK_ESCAPE) {
                 mouse_captured = false;
@@ -106,11 +109,13 @@ int main() {
             }
         }
 
-        glm::vec3 dir;
-        dir.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
-        dir.y = sin(glm::radians(pitch));
-        dir.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
-        gvk::camera.direction = glm::normalize(dir);
+        if (rmb_down) {
+            glm::vec3 dir;
+            dir.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
+            dir.y = sin(glm::radians(pitch));
+            dir.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
+            gvk::camera.direction = glm::normalize(dir);
+        }
 
         glm::vec3 forward = gvk::camera.direction;
         glm::vec3 right = glm::normalize(glm::cross(forward, glm::vec3{0.f, 1.f, 0.f}));
@@ -127,7 +132,27 @@ int main() {
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
-        //ImGui::ShowDemoWindow();
+
+        ImGui::Begin("Tonemapping variables");
+
+        ImGui::SliderFloat("Exposure", &gvk::main_post_processing_stack.tonemap_values.exposure, 0.5f, 2.f);
+        ImGui::SliderFloat("Temp", &gvk::main_post_processing_stack.tonemap_values.temp, -1.f, 1.f);
+        ImGui::SliderFloat("Tint", &gvk::main_post_processing_stack.tonemap_values.tint, -1.f, 1.f);
+        ImGui::SliderFloat("Contrast", &gvk::main_post_processing_stack.tonemap_values.contrast, 0.5f, 1.5f);
+        ImGui::SliderFloat("Saturation", &gvk::main_post_processing_stack.tonemap_values.saturation, 0.5f, 1.5f);
+        ImGui::SliderFloat("Highlights", &gvk::main_post_processing_stack.tonemap_values.highlights, -0.5f, 0.5f);
+        ImGui::SliderFloat("Midtones", &gvk::main_post_processing_stack.tonemap_values.midtones, -0.5f, 0.5f);
+        ImGui::SliderFloat("Shadows", &gvk::main_post_processing_stack.tonemap_values.shadows, -0.5f, 0.5f);
+        ImGui::SliderFloat("Whites", &gvk::main_post_processing_stack.tonemap_values.whites, -1.0f, 1.0f);
+        ImGui::SliderFloat("Blacks", &gvk::main_post_processing_stack.tonemap_values.blacks, -0.1f, 0.1f);
+        ImGui::SliderFloat("Vibrance", &gvk::main_post_processing_stack.tonemap_values.vibrance, 0.5f, 1.5f);
+        if (ImGui::Button("Reinhard")) gvk::main_post_processing_stack.tonemap_values.op = 0;
+        ImGui::SameLine();
+        if (ImGui::Button("Uncharted 2")) gvk::main_post_processing_stack.tonemap_values.op = 1;
+        ImGui::SameLine();
+        if (ImGui::Button("ACES")) gvk::main_post_processing_stack.tonemap_values.op = 2;
+
+        ImGui::End();
         ImGui::Render();
 
         gvk::draw_mesh(test_meshes[0], custom_texture, {-2.5f, 0.f, 0.f}, {1, 1, 1}, glm::quat(glm::vec3(0, 3.1416, 0)));
