@@ -765,6 +765,12 @@ struct GPUDrawPushConstants {
     VkDeviceAddress index_buffer;
 };
 
+struct MaterialPushConstants {
+    float scalar_tint;
+    float roughness;
+    float metallic;
+};
+
 struct GeoSurface {
     uint32_t start_index;
     uint32_t count;
@@ -957,9 +963,22 @@ struct DescriptorWriter {
     }
 };
 
+struct Material {
+    AllocatedImage albedo_map;
+    AllocatedImage normal_map;
+    AllocatedImage roughness_map;
+    AllocatedImage metallic_map;
+    AllocatedImage emissive_map;
+    AllocatedImage ao_map;
+
+    float scalar_tint;
+    float roughness;
+    float metallic;
+};
+
 struct RenderQueueMesh {
     shared_ptr<MeshAsset> mesh;
-    AllocatedImage image;
+    Material material;
     glm::vec3 position;
     glm::vec3 scale;
     glm::quat rotation;
@@ -1154,7 +1173,7 @@ namespace gvk {
     inline VkSampler _default_sampler_linear;
     inline VkSampler _default_sampler_nearest;
 
-    inline VkDescriptorSetLayout _single_image_descriptor_layout;
+    inline VkDescriptorSetLayout _mesh_descriptor_layout;
 
     struct {
         glm::vec3 position  = {0.f, 0.f, -5.f};
@@ -2607,19 +2626,6 @@ namespace gvk {
 
     PostProcessingStack main_post_processing_stack;
 
-    struct Material {
-        AllocatedImage albedo_map;
-        AllocatedImage normal_map;
-        AllocatedImage rougness_map;
-        AllocatedImage metallic_map;
-        AllocatedImage emissive_map;
-        AllocatedImage ao_map;
-
-        float scalar_tint;
-        float roughness;
-        float metallic;
-    };
-
     GPUMeshBuffers upload_mesh(span<uint32_t> indices, span<Vertex> vertices) {
         const size_t vb_size = vertices.size() * sizeof(Vertex);
         const size_t ib_size = indices.size() * sizeof(uint32_t);
@@ -3241,10 +3247,16 @@ namespace gvk {
         bufferRange.size = sizeof(GPUDrawPushConstants);
         bufferRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 
+        VkPushConstantRange material_buffer_range{};
+        material_buffer_range.offset = sizeof(GPUDrawPushConstants);
+        material_buffer_range.size = sizeof(MaterialPushConstants);
+        material_buffer_range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        VkPushConstantRange ranges[] = {bufferRange, material_buffer_range};
         VkPipelineLayoutCreateInfo pipeline_layout_info = pipeline_layout_create_info();
-        pipeline_layout_info.pPushConstantRanges = &bufferRange;
-        pipeline_layout_info.pushConstantRangeCount = 1;
-        pipeline_layout_info.pSetLayouts = &_single_image_descriptor_layout;
+        pipeline_layout_info.pPushConstantRanges = ranges;
+        pipeline_layout_info.pushConstantRangeCount = 2;
+        pipeline_layout_info.pSetLayouts = &_mesh_descriptor_layout;
         pipeline_layout_info.setLayoutCount = 1;
 
         VK_CHECK(vkCreatePipelineLayout(_vk_device, &pipeline_layout_info, nullptr, &_mesh_pipeline_layout));
@@ -3275,10 +3287,10 @@ namespace gvk {
         });
     }
 
-    void draw_mesh(shared_ptr<MeshAsset> mesh, AllocatedImage texture = _error_checkerboard_image, glm::vec3 position = {0, 0, 0}, glm::vec3 scale = {1, 1, 1}, glm::quat rotation = {1, 0, 0, 0}) {
+    void draw_mesh(shared_ptr<MeshAsset> mesh, Material material, glm::vec3 position = {0, 0, 0}, glm::vec3 scale = {1, 1, 1}, glm::quat rotation = {1, 0, 0, 0}) {
         render_queue.push_back(RenderQueueMesh{
             .mesh = mesh,
-            .image = texture,
+            .material = material,
             .position = position,
             .scale = scale,
             .rotation = rotation
@@ -3401,12 +3413,22 @@ namespace gvk {
             glm::vec3 max;
             calculate_world_AABB(min, max, m);
             if (is_AABB_inside_frustum(min, max, fc_left_plane, fc_right_plane, fc_bottom_plane, fc_top_plane, fc_near_plane, fc_top_plane)) {
+                MaterialPushConstants material_push_constants;
+                material_push_constants.roughness = m.material.roughness;
+                material_push_constants.metallic = m.material.metallic;
+                material_push_constants.scalar_tint = m.material.scalar_tint;
+
                 push_constants.world_matrix = projection * view * model;
 
-                VkDescriptorSet imageSet = get_current_frame()._frame_descriptors.allocate(_vk_device, _single_image_descriptor_layout);
+                VkDescriptorSet imageSet = get_current_frame()._frame_descriptors.allocate(_vk_device, _mesh_descriptor_layout);
                 {
                     DescriptorWriter writer;
-                    writer.write_image(0, m.image.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+                    writer.write_image(0, m.material.albedo_map.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+                    writer.write_image(1, m.material.normal_map.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+                    writer.write_image(2, m.material.roughness_map.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+                    writer.write_image(3, m.material.metallic_map.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+                    writer.write_image(4, m.material.emissive_map.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+                    writer.write_image(5, m.material.ao_map.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 
                     writer.update_set(_vk_device, imageSet);
                 }
@@ -3416,6 +3438,7 @@ namespace gvk {
                 push_constants.vertex_buffer = m.mesh->mesh_buffers.vertex_buffer_address;
 
                 vkCmdPushConstants(cmd, _mesh_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(GPUDrawPushConstants), &push_constants);
+                vkCmdPushConstants(cmd, _mesh_pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(GPUDrawPushConstants), sizeof(MaterialPushConstants), &material_push_constants);
                 vkCmdBindIndexBuffer(cmd, m.mesh->mesh_buffers.index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 
                 vkCmdDrawIndexed(cmd, m.mesh->surfaces[0].count, 1, m.mesh->surfaces[0].start_index, 0, 0);
@@ -3483,7 +3506,12 @@ namespace gvk {
         {
             DescriptorLayoutBuilder builder;
             builder.add_binding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-            _single_image_descriptor_layout = builder.build(_vk_device, VK_SHADER_STAGE_FRAGMENT_BIT);
+            builder.add_binding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            builder.add_binding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            builder.add_binding(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            builder.add_binding(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            builder.add_binding(5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            _mesh_descriptor_layout = builder.build(_vk_device, VK_SHADER_STAGE_FRAGMENT_BIT);
         }
 
         _draw_image_descriptors = global_descriptor_allocator.allocate(_vk_device, _draw_image_descriptor_layout);
@@ -3497,7 +3525,7 @@ namespace gvk {
 
             vkDestroyDescriptorSetLayout(_vk_device, _draw_image_descriptor_layout, nullptr);
             vkDestroyDescriptorSetLayout(_vk_device, _gpu_scene_data_descriptor_layout, nullptr);
-            vkDestroyDescriptorSetLayout(_vk_device, _single_image_descriptor_layout, nullptr);
+            vkDestroyDescriptorSetLayout(_vk_device, _mesh_descriptor_layout, nullptr);
         });
 
         for (int i = 0; i < FRAME_OVERLAP; i++) {
