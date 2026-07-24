@@ -974,6 +974,8 @@ struct Material {
     float scalar_tint;
     float roughness;
     float metallic;
+
+    VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
 };
 
 struct RenderQueueMesh {
@@ -1209,6 +1211,9 @@ namespace gvk {
     inline VkSampleCountFlagBits msaa_sample_count = VK_SAMPLE_COUNT_8_BIT;
     inline AllocatedImage _draw_image_msaa;
     inline AllocatedImage _depth_image_msaa;
+
+    // lighting
+    inline DescriptorAllocatorGrowable material_descriptor_allocator;
 
     void immediate_submit(function<void(VkCommandBuffer cmd)>&& function) {
         vkWaitForFences(_vk_device, 1, &_imm_fence, VK_TRUE, UINT64_MAX);
@@ -2626,6 +2631,32 @@ namespace gvk {
 
     PostProcessingStack main_post_processing_stack;
 
+    Material create_material(AllocatedImage albedo, AllocatedImage normal, AllocatedImage roughness, AllocatedImage metallic, AllocatedImage emissive, AllocatedImage ao, float scalar_tint = 1.f, float roughness_factor = 1.f, float metallic_factor = 1.f) {
+        Material mat{};
+        mat.albedo_map = albedo;
+        mat.normal_map = normal;
+        mat.roughness_map = roughness;
+        mat.metallic_map = metallic;
+        mat.emissive_map = emissive;
+        mat.ao_map = ao;
+        mat.scalar_tint = scalar_tint;
+        mat.roughness = roughness_factor;
+        mat.metallic = metallic_factor;
+
+        mat.descriptor_set = material_descriptor_allocator.allocate(_vk_device, _mesh_descriptor_layout);
+
+        DescriptorWriter writer;
+        writer.write_image(0, mat.albedo_map.image_view,    _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        writer.write_image(1, mat.normal_map.image_view,    _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        writer.write_image(2, mat.roughness_map.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        writer.write_image(3, mat.metallic_map.image_view,  _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        writer.write_image(4, mat.emissive_map.image_view,  _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        writer.write_image(5, mat.ao_map.image_view,        _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        writer.update_set(_vk_device, mat.descriptor_set);
+
+        return mat;
+    }
+
     GPUMeshBuffers upload_mesh(span<uint32_t> indices, span<Vertex> vertices) {
         const size_t vb_size = vertices.size() * sizeof(Vertex);
         const size_t ib_size = indices.size() * sizeof(uint32_t);
@@ -3419,21 +3450,7 @@ namespace gvk {
                 material_push_constants.scalar_tint = m.material.scalar_tint;
 
                 push_constants.world_matrix = projection * view * model;
-
-                VkDescriptorSet imageSet = get_current_frame()._frame_descriptors.allocate(_vk_device, _mesh_descriptor_layout);
-                {
-                    DescriptorWriter writer;
-                    writer.write_image(0, m.material.albedo_map.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-                    writer.write_image(1, m.material.normal_map.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-                    writer.write_image(2, m.material.roughness_map.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-                    writer.write_image(3, m.material.metallic_map.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-                    writer.write_image(4, m.material.emissive_map.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-                    writer.write_image(5, m.material.ao_map.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-
-                    writer.update_set(_vk_device, imageSet);
-                }
-
-                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _mesh_pipeline_layout, 0, 1, &imageSet, 0, nullptr);
+                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _mesh_pipeline_layout, 0, 1, &m.material.descriptor_set, 0, nullptr);
 
                 push_constants.vertex_buffer = m.mesh->mesh_buffers.vertex_buffer_address;
 
@@ -3490,6 +3507,11 @@ namespace gvk {
         };
 
         global_descriptor_allocator.init_pool(_vk_device, 20, sizes);
+
+        std::vector<DescriptorAllocatorGrowable::PoolSizeRatio> material_pool_sizes = {
+            { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 6 }
+        };
+        material_descriptor_allocator.init(_vk_device, 256, material_pool_sizes);
 
         {
             DescriptorLayoutBuilder builder;

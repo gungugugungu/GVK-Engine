@@ -107,22 +107,8 @@ int main() {
     create_posdatas(monkeyinstances, 100);
     create_posdatas(teapotinstances, 100);
 
-    Material monkeymat;
-    Material teapotmat;
-
-    monkeymat.albedo_map = monkey_texture;
-    monkeymat.roughness_map = gvk::_white_image;
-    monkeymat.metallic_map = gvk::_black_image;
-    monkeymat.normal_map = water_normal;
-    monkeymat.emissive_map = gvk::_black_image;
-    monkeymat.ao_map = gvk::_black_image;
-
-    teapotmat.albedo_map = gvk::_error_checkerboard_image;
-    teapotmat.roughness_map = gvk::_white_image;
-    teapotmat.metallic_map = gvk::_black_image;
-    teapotmat.normal_map = water_normal;
-    teapotmat.emissive_map = gvk::_black_image;
-    teapotmat.ao_map = gvk::_black_image;
+    Material monkeymat = gvk::create_material(monkey_texture, water_normal, gvk::_white_image, gvk::_black_image, gvk::_black_image, gvk::_black_image);
+    Material teapotmat = gvk::create_material(gvk::_error_checkerboard_image, water_normal, gvk::_white_image, gvk::_black_image, gvk::_black_image, gvk::_black_image);
 
     bool running = true;
     while (running) {
