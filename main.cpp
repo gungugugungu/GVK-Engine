@@ -172,6 +172,151 @@ int main() {
 
         ImGui::Begin("Tonemapping variables");
 
+        if (ImGui::CollapsingHeader("LIGHTS")) {
+            ImGui::BeginChild("LIGHTSIES");
+            if (ImGui::CollapsingHeader("DIRECTIONAL LIGHT")) {
+                float directionthingy[3] = {gvk::directional_light.direction.x, gvk::directional_light.direction.y, gvk::directional_light.direction.z};
+                ImGui::SliderFloat3("DIRECTION", directionthingy, -1.f, 1.f);
+                gvk::directional_light.direction.x = directionthingy[0];
+                gvk::directional_light.direction.y = directionthingy[1];
+                gvk::directional_light.direction.z = directionthingy[2];
+                float colorthingy[3] = {gvk::directional_light.color.x, gvk::directional_light.color.y, gvk::directional_light.color.z};
+                ImGui::ColorPicker3("COLOR", colorthingy);
+                gvk::directional_light.color.x = colorthingy[0];
+                gvk::directional_light.color.y = colorthingy[1];
+                gvk::directional_light.color.z = colorthingy[2];
+                ImGui::SliderFloat("INTENSITY", &gvk::directional_light.intensity, 0.f, 20.f);
+            }
+            if (ImGui::CollapsingHeader("POINT LIGHTS"))
+            {
+                static int selected_point = -1;
+
+                ImGui::BeginChild("POINT LIGHTS LIST", ImVec2(ImGui::GetContentRegionAvail().x * 0.4f, 220), true);
+                {
+                    for (int i = 0; i < (int)gvk::point_lights.size(); ++i)
+                    {
+                        char label[64];
+                        snprintf(label, sizeof(label), "POINT LIGHT %d", i);
+
+                        if (ImGui::Selectable(label, selected_point == i))
+                            selected_point = i;
+                    }
+                }
+                ImGui::EndChild();
+
+                ImGui::SameLine();
+
+                ImGui::BeginChild("POINT LIGHT EDITOR", ImVec2(0, 220), true);
+                {
+                    if (selected_point >= 0 && selected_point < (int)gvk::point_lights.size())
+                    {
+                        auto& light = gvk::point_lights[selected_point];
+
+                        float pos[3] = { light.position.x, light.position.y, light.position.z };
+                        if (ImGui::DragFloat3("POSITION", pos, 0.1f))
+                        {
+                            light.position = { pos[0], pos[1], pos[2] };
+                        }
+
+                        float col[3] = { light.color.x, light.color.y, light.color.z };
+                        if (ImGui::ColorEdit3("COLOR", col))
+                        {
+                            light.color = { col[0], col[1], col[2] };
+                        }
+
+                        ImGui::DragFloat("RANGE", &light.range, 0.1f, 0.1f, 1000.f);
+                        ImGui::DragFloat("INTENSITY", &light.intensity, 0.05f, 0.0f, 100.f);
+
+                        if (ImGui::Button("DELETE"))
+                        {
+                            gvk::point_lights.erase(gvk::point_lights.begin() + selected_point);
+                            selected_point = -1;
+                        }
+                    }
+                    else
+                    {
+                        ImGui::TextDisabled("No point light selected");
+                    }
+                }
+                ImGui::EndChild();
+
+                if (ImGui::Button("ADD POINT LIGHT"))
+                {
+                    gvk::PointLight l;
+                    gvk::point_lights.push_back(l);
+                    selected_point = (int)gvk::point_lights.size() - 1;
+                }
+            }
+
+            if (ImGui::CollapsingHeader("SPOT LIGHTS"))
+            {
+                static int selected_spot = -1;
+
+                ImGui::BeginChild("SPOT LIGHT LIST", ImVec2(ImGui::GetContentRegionAvail().x * 0.4f, 220), true);
+                {
+                    for (int i = 0; i < (int)gvk::spot_lights.size(); ++i)
+                    {
+                        char label[64];
+                        snprintf(label, sizeof(label), "SPOT LIGHT %d", i);
+
+                        if (ImGui::Selectable(label, selected_spot == i))
+                            selected_spot = i;
+                    }
+                }
+                ImGui::EndChild();
+
+                ImGui::SameLine();
+
+                ImGui::BeginChild("SPOT LIGHT EDITOR", ImVec2(0, 220), true);
+                {
+                    if (selected_spot >= 0 && selected_spot < (int)gvk::spot_lights.size())
+                    {
+                        auto& light = gvk::spot_lights[selected_spot];
+
+                        float pos[3] = { light.position.x, light.position.y, light.position.z };
+                        if (ImGui::DragFloat3("POSITION", pos, 0.1f))
+                        {
+                            light.position = { pos[0], pos[1], pos[2] };
+                        }
+
+                        float dir[3] = { light.direction.x, light.direction.y, light.direction.z };
+                        if (ImGui::DragFloat3("DIRECTION", dir, 0.01f, -1.f, 1.f))
+                        {
+                            light.direction = glm::normalize(glm::vec3{ dir[0], dir[1], dir[2] });
+                        }
+
+                        float col[3] = { light.color.x, light.color.y, light.color.z };
+                        if (ImGui::ColorEdit3("COLOR", col))
+                        {
+                            light.color = { col[0], col[1], col[2] };
+                        }
+
+                        ImGui::DragFloat("RANGE", &light.range, 0.1f, 0.1f, 1000.f);
+                        ImGui::DragFloat("INTENSITY", &light.intensity, 0.05f, 0.0f, 100.f);
+
+                        if (ImGui::Button("DELETE"))
+                        {
+                            gvk::spot_lights.erase(gvk::spot_lights.begin() + selected_spot);
+                            selected_spot = -1;
+                        }
+                    }
+                    else
+                    {
+                        ImGui::TextDisabled("No spot light selected");
+                    }
+                }
+                ImGui::EndChild();
+
+                if (ImGui::Button("ADD SPOTLIGHT"))
+                {
+                    gvk::SpotLight l;
+                    gvk::spot_lights.push_back(l);
+                    selected_spot = (int)gvk::spot_lights.size() - 1;
+                }
+            }
+            ImGui::EndChild();
+        }
+
         if (ImGui::CollapsingHeader("COLOR GRADING")) {
             ImGui::Checkbox("Tonemapping", &gvk::main_post_processing_stack.tonemapping_enabled);
             ImGui::SliderFloat("Exposure", &gvk::main_post_processing_stack.tonemap_values.exposure, 0.5f, 2.f);

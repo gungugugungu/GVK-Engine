@@ -760,9 +760,14 @@ struct GPUMeshBuffers {
 };
 
 struct GPUDrawPushConstants {
-    glm::mat4 world_matrix;
+    glm::mat4 model_matrix;
+    glm::mat4 render_matrix;
     VkDeviceAddress vertex_buffer;
-    VkDeviceAddress index_buffer;
+};
+
+struct SkyboxPushConstants {
+    glm::mat4 render_matrix;
+    VkDeviceAddress vertex_buffer;
 };
 
 struct MaterialPushConstants {
@@ -1100,9 +1105,16 @@ struct Skybox {
 struct GPUDirectionalLight {
     glm::vec3 direction;
     float _pad0;
+
     glm::vec3 color;
     float intensity;
-}; // 32 bytes std140
+
+    glm::vec3 camera_pos;
+    float _pad1;
+
+    glm::vec3 ambient_color;
+    float ambient_intensity;
+}; // 64 bytes std140
 
 struct GPUPointLight {
     glm::vec3 position;
@@ -1255,7 +1267,7 @@ namespace gvk {
     inline DescriptorAllocatorGrowable light_descriptor_allocator;
     inline VkDescriptorSetLayout _light_descriptor_layout;
     inline struct {
-        glm::vec3 direction = {0.f, 0.f, 0.f};
+        glm::vec3 direction = {0.f, -1.f, 0.f};
         glm::vec3 color = {1.f, 1.f, 1.f};
         float intensity = 1.f;
     } directional_light;
@@ -1277,6 +1289,11 @@ namespace gvk {
 
     vector<PointLight> point_lights;
     vector<SpotLight> spot_lights;
+
+    struct {
+        glm::vec3 color = {1.f, 1.f, 1.f};
+        float intensity = 1.f;
+    } ambient_light;
 
     void immediate_submit(function<void(VkCommandBuffer cmd)>&& function) {
         vkWaitForFences(_vk_device, 1, &_imm_fence, VK_TRUE, UINT64_MAX);
@@ -2844,7 +2861,7 @@ namespace gvk {
 
         VkPushConstantRange buffer_range{};
         buffer_range.offset = 0;
-        buffer_range.size = sizeof(GPUDrawPushConstants);
+        buffer_range.size = sizeof(SkyboxPushConstants);
         buffer_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 
         VkPipelineLayoutCreateInfo layout_info = pipeline_layout_create_info();
@@ -3428,11 +3445,11 @@ namespace gvk {
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skybox.pip);
 
-        GPUDrawPushConstants push_constants;
+        SkyboxPushConstants push_constants;
         glm::mat4 projection = glm::perspective(glm::radians(fov), static_cast<float>(_draw_extent.width) / static_cast<float>(_draw_extent.height), 10000.f, 0.1f);
         projection[1][1] *= -1;
         glm::mat4 view = glm::lookAt(camera.position, camera.position + camera.direction, glm::vec3{ 0.f, 1.f, 0.f });
-        push_constants.world_matrix = projection*glm::mat4(glm::mat3(view));
+        push_constants.render_matrix = projection*glm::mat4(glm::mat3(view));
 
         VkDescriptorSet imageSet = get_current_frame()._frame_descriptors.allocate(_vk_device, skybox.desc_layout);
         {
@@ -3446,7 +3463,7 @@ namespace gvk {
 
         push_constants.vertex_buffer = skybox.mesh_buffers.vertex_buffer_address;
 
-        vkCmdPushConstants(cmd, skybox.piplayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(GPUDrawPushConstants), &push_constants);
+        vkCmdPushConstants(cmd, skybox.piplayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(SkyboxPushConstants), &push_constants);
         vkCmdBindIndexBuffer(cmd, skybox.mesh_buffers.index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
 
         vkCmdDrawIndexed(cmd, 36, 1, 0, 0, 0);
@@ -3482,6 +3499,9 @@ namespace gvk {
             dst->direction = directional_light.direction;
             dst->color = directional_light.color;
             dst->intensity = directional_light.intensity;
+            dst->camera_pos = camera.position;
+            dst->ambient_color = ambient_light.color;
+            dst->ambient_intensity = ambient_light.intensity;
         }
 
         const size_t point_count = point_lights.size();
@@ -3576,9 +3596,10 @@ namespace gvk {
                 material_push_constants.metallic = m.material.metallic;
                 material_push_constants.scalar_tint = m.material.scalar_tint;
 
-                push_constants.world_matrix = projection * view * model;
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _mesh_pipeline_layout, 0, 1, &m.material.descriptor_set, 0, nullptr);
 
+                push_constants.model_matrix = model;
+                push_constants.render_matrix = projection * view * model;
                 push_constants.vertex_buffer = m.mesh->mesh_buffers.vertex_buffer_address;
 
                 vkCmdPushConstants(cmd, _mesh_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(GPUDrawPushConstants), &push_constants);
