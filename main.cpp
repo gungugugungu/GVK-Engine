@@ -24,14 +24,6 @@ TODO FEATURES:
     - shadow sampling in the main fragment shader
     - shadow bias
     - PCF filtering
- - 7. material system
-    - material struct (albedo map, normal map, roughness map, emissive map, scalar tint and roughness and metallic factors)
-    - material descriptor layout
-    - default fallback textures
-    - gltf material loading
-    - draw_mesh api update
-    - emissive support in the shader
-    - creating and destroying materials for user-made materials
  - 10. instanced rendering
     - per-instance storage buffer
     - draw_mesh_instanced api
@@ -171,8 +163,8 @@ int main() {
         if (keys[SDL_SCANCODE_S]) gvk::camera.position -= forward * speed * dt;
         if (keys[SDL_SCANCODE_A]) gvk::camera.position -= right * speed * dt;
         if (keys[SDL_SCANCODE_D]) gvk::camera.position += right * speed * dt;
-        if (keys[SDL_SCANCODE_SPACE]) gvk::camera.position += up * speed * dt;
-        if (keys[SDL_SCANCODE_LCTRL]) gvk::camera.position -= up * speed * dt;
+        if (keys[SDL_SCANCODE_SPACE] || keys[SDL_SCANCODE_E]) gvk::camera.position += up * speed * dt;
+        if (keys[SDL_SCANCODE_LCTRL] || keys[SDL_SCANCODE_Q]) gvk::camera.position -= up * speed * dt;
 
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplSDL3_NewFrame();

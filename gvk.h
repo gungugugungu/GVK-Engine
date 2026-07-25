@@ -1097,6 +1097,44 @@ struct Skybox {
     VkDescriptorSetLayout desc_layout;
 };
 
+struct GPUDirectionalLight {
+    glm::vec3 direction;
+    float _pad0;
+    glm::vec3 color;
+    float intensity;
+}; // 32 bytes std140
+
+struct GPUPointLight {
+    glm::vec3 position;
+    float _pad0;
+    glm::vec3 color;
+    float range;
+    float intensity;
+    float _pad1;
+    float _pad2;
+    float _pad3;
+}; // 48 bytes std430
+
+struct GPUSpotLight {
+    glm::vec3 position;
+    float _pad0;
+    glm::vec3 direction;
+    float _pad1;
+    glm::vec3 color;
+    float range;
+    float intensity;
+    float _pad2;
+    float _pad3;
+    float _pad4;
+}; // 64 bytes std430
+
+struct GPULightCounts {
+    uint32_t point_light_count;
+    uint32_t spot_light_count;
+    uint32_t _pad0;
+    uint32_t _pad1;
+}; // 16 bytes std140
+
 namespace gvk {
     void init();
     void quit();
@@ -1214,6 +1252,31 @@ namespace gvk {
 
     // lighting
     inline DescriptorAllocatorGrowable material_descriptor_allocator;
+    inline DescriptorAllocatorGrowable light_descriptor_allocator;
+    inline VkDescriptorSetLayout _light_descriptor_layout;
+    inline struct {
+        glm::vec3 direction = {0.f, 0.f, 0.f};
+        glm::vec3 color = {1.f, 1.f, 1.f};
+        float intensity = 1.f;
+    } directional_light;
+
+    struct PointLight {
+        glm::vec3 position = {0.f, 0.f, 0.f};
+        glm::vec3 color = {1.f, 1.f, 1.f};
+        float range = 1.f;
+        float intensity = 1.f;
+    };
+
+    struct SpotLight {
+        glm::vec3 position = {0.f, 0.f, 0.f};
+        glm::vec3 direction = {0.f, 0.f, 0.f};
+        glm::vec3 color = {1.f, 1.f, 1.f};
+        float range = 1.f;
+        float intensity = 1.f;
+    };
+
+    vector<PointLight> point_lights;
+    vector<SpotLight> spot_lights;
 
     void immediate_submit(function<void(VkCommandBuffer cmd)>&& function) {
         vkWaitForFences(_vk_device, 1, &_imm_fence, VK_TRUE, UINT64_MAX);
@@ -3284,11 +3347,12 @@ namespace gvk {
         material_buffer_range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
         VkPushConstantRange ranges[] = {bufferRange, material_buffer_range};
+        VkDescriptorSetLayout layouts[] = {_mesh_descriptor_layout, _light_descriptor_layout};
         VkPipelineLayoutCreateInfo pipeline_layout_info = pipeline_layout_create_info();
         pipeline_layout_info.pPushConstantRanges = ranges;
         pipeline_layout_info.pushConstantRangeCount = 2;
-        pipeline_layout_info.pSetLayouts = &_mesh_descriptor_layout;
-        pipeline_layout_info.setLayoutCount = 1;
+        pipeline_layout_info.pSetLayouts = layouts;
+        pipeline_layout_info.setLayoutCount = 2;
 
         VK_CHECK(vkCreatePipelineLayout(_vk_device, &pipeline_layout_info, nullptr, &_mesh_pipeline_layout));
 
@@ -3411,6 +3475,67 @@ namespace gvk {
         writer.write_buffer(0, gpu_scene_data_buffer.buffer, sizeof(GPUSceneData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
         writer.update_set(_vk_device, global_descriptor);
 
+        // lights
+        AllocatedBuffer dir_light_buf = create_buffer(sizeof(GPUDirectionalLight), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+        {
+            auto* dst = static_cast<GPUDirectionalLight*>(dir_light_buf.allocation->GetMappedData());
+            dst->direction = directional_light.direction;
+            dst->color = directional_light.color;
+            dst->intensity = directional_light.intensity;
+        }
+
+        const size_t point_count = point_lights.size();
+        const size_t point_buf_size = std::max(size_t(1), point_count) * sizeof(GPUPointLight);
+        AllocatedBuffer point_light_buf = create_buffer(point_buf_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+        if (point_count > 0) {
+            auto* dst = static_cast<GPUPointLight*>(point_light_buf.allocation->GetMappedData());
+            for (size_t i = 0; i < point_count; i++) {
+                dst[i].position = point_lights[i].position;
+                dst[i].color = point_lights[i].color;
+                dst[i].range = point_lights[i].range;
+                dst[i].intensity = point_lights[i].intensity;
+            }
+        }
+
+        const size_t spot_count = spot_lights.size();
+        const size_t spot_buf_size = std::max(size_t(1), spot_count) * sizeof(GPUSpotLight);
+        AllocatedBuffer spot_light_buf = create_buffer(spot_buf_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+        if (spot_count > 0) {
+            auto* dst = static_cast<GPUSpotLight*>(spot_light_buf.allocation->GetMappedData());
+            for (size_t i = 0; i < spot_count; i++) {
+                dst[i].position = spot_lights[i].position;
+                dst[i].direction = spot_lights[i].direction;
+                dst[i].color = spot_lights[i].color;
+                dst[i].range = spot_lights[i].range;
+                dst[i].intensity = spot_lights[i].intensity;
+            }
+        }
+
+        AllocatedBuffer counts_buf = create_buffer(sizeof(GPULightCounts), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+        {
+            auto* dst = static_cast<GPULightCounts*>(counts_buf.allocation->GetMappedData());
+            dst->point_light_count = static_cast<uint32_t>(point_count);
+            dst->spot_light_count = static_cast<uint32_t>(spot_count);
+        }
+
+        get_current_frame()._deletion_queue.push_function([=]() {
+            destroy_buffer(dir_light_buf);
+            destroy_buffer(point_light_buf);
+            destroy_buffer(spot_light_buf);
+            destroy_buffer(counts_buf);
+        });
+
+        VkDescriptorSet light_set = light_descriptor_allocator.allocate(_vk_device, _light_descriptor_layout);
+
+        {
+            DescriptorWriter writer;
+            writer.write_buffer(0, dir_light_buf.buffer, sizeof(GPUDirectionalLight), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+            writer.write_buffer(1, point_light_buf.buffer, point_buf_size, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+            writer.write_buffer(2, spot_light_buf.buffer, spot_buf_size, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+            writer.write_buffer(3, counts_buf.buffer, sizeof(GPULightCounts), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+            writer.update_set(_vk_device, light_set);
+        }
+
         vkCmdBeginRendering(cmd, &render_info);
 
         VkViewport viewport = {};
@@ -3428,6 +3553,8 @@ namespace gvk {
         vkCmdSetScissor(cmd, 0, 1, &scissor);
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _mesh_pipeline);
+
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _mesh_pipeline_layout, 1, 1, &light_set, 0, nullptr);
 
         GPUDrawPushConstants push_constants;
         glm::mat4 projection = glm::perspective(glm::radians(fov), static_cast<float>(_draw_extent.width) / static_cast<float>(_draw_extent.height), 10000.f, 0.1f);
@@ -3542,12 +3669,29 @@ namespace gvk {
 
         writer.update_set(_vk_device, _draw_image_descriptors);
 
-        _main_deletion_queue.push_function([&]() {
-           global_descriptor_allocator.destroy_pool(_vk_device);
+        {
+            DescriptorLayoutBuilder builder;
+            builder.add_binding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER); // directional
+            builder.add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // point
+            builder.add_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // spot
+            builder.add_binding(3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+            _light_descriptor_layout = builder.build(_vk_device, VK_SHADER_STAGE_FRAGMENT_BIT);
+        }
 
+        vector<DescriptorAllocatorGrowable::PoolSizeRatio> light_pool_sizes = {
+            {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2},
+            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2}
+        };
+        light_descriptor_allocator.init(_vk_device, 64, light_pool_sizes);
+
+        _main_deletion_queue.push_function([&]() {
             vkDestroyDescriptorSetLayout(_vk_device, _draw_image_descriptor_layout, nullptr);
             vkDestroyDescriptorSetLayout(_vk_device, _gpu_scene_data_descriptor_layout, nullptr);
             vkDestroyDescriptorSetLayout(_vk_device, _mesh_descriptor_layout, nullptr);
+            vkDestroyDescriptorSetLayout(_vk_device, _light_descriptor_layout, nullptr);
+
+            global_descriptor_allocator.destroy_pool(_vk_device);
+            light_descriptor_allocator.destroy_pools(_vk_device);
         });
 
         for (int i = 0; i < FRAME_OVERLAP; i++) {
