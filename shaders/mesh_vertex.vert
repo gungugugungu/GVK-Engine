@@ -4,12 +4,14 @@
 layout (location = 0) out vec2 outUV;
 layout(location = 1) out vec3 world_pos;
 layout(location = 2) out vec3 world_normal;
+layout(location = 3) out vec4 world_tangent;
 
 struct Vertex {
     vec3 position;
     float uv_x;
     vec3 normal;
     float uv_y;
+    vec4 tangent;
 };
 
 layout(buffer_reference, std430) readonly buffer VertexBuffer{
@@ -30,7 +32,10 @@ void main()
     gl_Position = PushConstants.render_matrix * vec4(v.position, 1.0);
 
     world_pos = (PushConstants.model_matrix * vec4(v.position, 1.0)).xyz;
+
     world_normal = mat3(PushConstants.model_matrix) * v.normal;
+
+    world_tangent = vec4(mat3(PushConstants.model_matrix) * v.tangent.xyz, v.tangent.w);
 
     outUV = vec2(v.uv_x, v.uv_y);
 }

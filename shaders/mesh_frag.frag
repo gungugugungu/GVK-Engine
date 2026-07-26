@@ -3,6 +3,7 @@
 layout (location = 0) in vec2 uv;
 layout (location = 1) in vec3 world_pos;
 layout (location = 2) in vec3 world_normal;
+layout (location = 3) in vec4 world_tangent;
 
 layout (location = 0) out vec4 frag_color;
 
@@ -127,6 +128,12 @@ void main()
     float metallic = clamp(metallicTex * MaterialPushConstants.metallic, 0.0, 1.0);
 
     vec3 N = normalize(world_normal);
+    vec3 T = normalize(world_tangent.xyz);
+    T = normalize(T - N * dot(N, T));
+    vec3 B = cross(N, T) * world_tangent.w;
+    vec3 tangentNormal = texture(normal_map, uv).xyz * 2.0 - 1.0;
+    mat3 TBN = mat3(T, B, N);
+    N = normalize(TBN * tangentNormal);
     vec3 V = normalize(directionalLight.light.camera_pos - world_pos);
 
     vec3 F0 = mix(vec3(0.04), albedo, metallic);

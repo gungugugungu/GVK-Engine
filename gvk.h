@@ -744,6 +744,7 @@ struct Vertex {
     float uv_x;
     glm::vec3 normal;
     float uv_y;
+    glm::vec4 tangent;
 };
 
 void debug_print_vertex_data(Vertex vert) {
@@ -2787,6 +2788,7 @@ namespace gvk {
             temp_vert.position.z = skybox_vertices[i+2];
             temp_vert.uv_x = 1.f;
             temp_vert.uv_y = 1.f;
+            temp_vert.tangent = {1, 0, 0, 1};
 
             skybox_vertices_as_proper_struct_because_im_lazy_to_hardcode_them.push_back(temp_vert);
         }
@@ -3986,6 +3988,7 @@ namespace gvk {
                         vtx.normal = {1, 0, 0};
                         vtx.uv_x = 0;
                         vtx.uv_y = 0;
+                        vtx.tangent = {1, 0, 0, 1};
                         vertices[initial_vtx + i] = vtx;
                     }
                 }
@@ -4012,6 +4015,19 @@ namespace gvk {
                             const glm::vec2 uv = *reinterpret_cast<const glm::vec2*>(ptr + i * s);
                             vertices[initial_vtx + i].uv_x = uv.x;
                             vertices[initial_vtx + i].uv_y = uv.y;
+                        }
+                    }
+                }
+
+                // TANGENT
+                {
+                    auto it = prim.attributes.find("TANGENT");
+                    if (it != prim.attributes.end()) {
+                        const tinygltf::Accessor& acc = model.accessors[it->second];
+                        const size_t s = stride_of(acc);
+                        const uint8_t* ptr = data_ptr(acc);
+                        for (size_t i = 0; i < acc.count; i++) {
+                            vertices[initial_vtx + i].tangent = *reinterpret_cast<const glm::vec4*>(ptr + i * s);
                         }
                     }
                 }
