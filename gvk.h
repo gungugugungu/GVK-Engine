@@ -1224,6 +1224,7 @@ namespace gvk {
     inline AllocatedImage _black_image;
     inline AllocatedImage _gray_image;
     inline AllocatedImage _error_checkerboard_image;
+    inline AllocatedImage _normal_image;
 
     inline VkSampler _default_sampler_linear;
     inline VkSampler _default_sampler_nearest;
@@ -1297,7 +1298,7 @@ namespace gvk {
 
     struct {
         glm::vec3 color = {1.f, 1.f, 1.f};
-        float intensity = 1.f;
+        float intensity = 0.2f;
     } ambient_light;
 
     void immediate_submit(function<void(VkCommandBuffer cmd)>&& function) {
@@ -2716,14 +2717,14 @@ namespace gvk {
 
     PostProcessingStack main_post_processing_stack;
 
-    Material create_material(AllocatedImage albedo, AllocatedImage normal, AllocatedImage roughness, AllocatedImage metallic, AllocatedImage emissive, AllocatedImage ao, float scalar_tint = 1.f, float roughness_factor = 1.f, float metallic_factor = 1.f) {
+    Material create_material(AllocatedImage albedo = {}, AllocatedImage normal = {}, AllocatedImage roughness = {}, AllocatedImage metallic = {}, AllocatedImage emissive = {}, AllocatedImage ao = {}, float scalar_tint = 1.f, float roughness_factor = 1.f, float metallic_factor = 0.f) {
         Material mat{};
-        mat.albedo_map = albedo;
-        mat.normal_map = normal;
-        mat.roughness_map = roughness;
-        mat.metallic_map = metallic;
-        mat.emissive_map = emissive;
-        mat.ao_map = ao;
+        mat.albedo_map = (albedo.image != VK_NULL_HANDLE) ? albedo : _white_image;
+        mat.normal_map = (normal.image != VK_NULL_HANDLE) ? normal : _normal_image;
+        mat.roughness_map = (roughness.image != VK_NULL_HANDLE) ? roughness : _white_image;
+        mat.metallic_map = (metallic.image != VK_NULL_HANDLE) ? metallic : _black_image;
+        mat.emissive_map = (emissive.image != VK_NULL_HANDLE) ? emissive : _black_image;
+        mat.ao_map = (ao.image != VK_NULL_HANDLE) ? ao : _white_image;
         mat.scalar_tint = scalar_tint;
         mat.roughness = roughness_factor;
         mat.metallic = metallic_factor;
@@ -2731,12 +2732,12 @@ namespace gvk {
         mat.descriptor_set = material_descriptor_allocator.allocate(_vk_device, _mesh_descriptor_layout);
 
         DescriptorWriter writer;
-        writer.write_image(0, mat.albedo_map.image_view,    _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-        writer.write_image(1, mat.normal_map.image_view,    _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        writer.write_image(0, mat.albedo_map.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        writer.write_image(1, mat.normal_map.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
         writer.write_image(2, mat.roughness_map.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-        writer.write_image(3, mat.metallic_map.image_view,  _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-        writer.write_image(4, mat.emissive_map.image_view,  _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-        writer.write_image(5, mat.ao_map.image_view,        _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        writer.write_image(3, mat.metallic_map.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        writer.write_image(4, mat.emissive_map.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        writer.write_image(5, mat.ao_map.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
         writer.update_set(_vk_device, mat.descriptor_set);
 
         return mat;
@@ -3316,6 +3317,9 @@ namespace gvk {
             }
         }
         _error_checkerboard_image = create_image(pixels.data(), VkExtent3D{16, 16, 1}, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT);
+
+        uint32_t normal = glm::packUnorm4x8(glm::vec4(0.5f, 0.5f, 1.0f, 1.f));
+        _normal_image = create_image((void*)&normal, VkExtent3D{ 1, 1, 1 }, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT);
 
         VkSamplerCreateInfo sampl = {.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
 
@@ -4118,7 +4122,7 @@ namespace gvk {
             }
 
             AllocatedImage albedo = load_texture(mat.pbrMetallicRoughness.baseColorTexture.index, _white_image);
-            AllocatedImage normal = load_texture(mat.normalTexture.index, _white_image);
+            AllocatedImage normal = load_texture(mat.normalTexture.index, _normal_image);
             AllocatedImage roughness_map = load_texture(mat.pbrMetallicRoughness.metallicRoughnessTexture.index, _white_image);
             AllocatedImage metallic_map = load_texture(mat.pbrMetallicRoughness.metallicRoughnessTexture.index, _black_image);
             AllocatedImage emissive = load_texture(mat.emissiveTexture.index, _black_image);

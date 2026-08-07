@@ -185,6 +185,14 @@ int main() {
 
         if (ImGui::CollapsingHeader("LIGHTS")) {
             ImGui::BeginChild("LIGHTSIES");
+            if (ImGui::CollapsingHeader("AMBIENT LIGHT")) {
+                float colorthingy[3] = {gvk::ambient_light.color.x, gvk::ambient_light.color.y, gvk::ambient_light.color.z};
+                ImGui::ColorPicker3("COLOR", colorthingy);
+                gvk::ambient_light.color.x = colorthingy[0];
+                gvk::ambient_light.color.y = colorthingy[1];
+                gvk::ambient_light.color.z = colorthingy[2];
+                ImGui::SliderFloat("INTENSITY", &gvk::ambient_light.intensity, 0.f, 20.f);
+            }
             if (ImGui::CollapsingHeader("DIRECTIONAL LIGHT")) {
                 float directionthingy[3] = {gvk::directional_light.direction.x, gvk::directional_light.direction.y, gvk::directional_light.direction.z};
                 ImGui::SliderFloat3("DIRECTION", directionthingy, -1.f, 1.f);
