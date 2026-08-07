@@ -31,6 +31,8 @@
 #include <filesystem>
 #include <iostream>
 #include <glm/gtx/quaternion.hpp>
+
+#include "fmt/ostream.h"
 #include "include/glm/glm/gtc/matrix_access.hpp"
 #include "include/tinygltf/tiny_gltf.h"
 
@@ -985,7 +987,7 @@ struct Material {
 };
 
 struct RenderQueueMesh {
-    shared_ptr<MeshAsset> mesh;
+    MeshAsset* mesh;
     Material material;
     glm::vec3 position;
     glm::vec3 scale;
@@ -1267,11 +1269,13 @@ namespace gvk {
     inline DescriptorAllocatorGrowable material_descriptor_allocator;
     inline DescriptorAllocatorGrowable light_descriptor_allocator;
     inline VkDescriptorSetLayout _light_descriptor_layout;
-    inline struct {
+    struct DirectionalLight {
         glm::vec3 direction = {0.f, -1.f, 0.f};
         glm::vec3 color = {1.f, 1.f, 1.f};
         float intensity = 1.f;
-    } directional_light;
+    };
+
+    inline DirectionalLight directional_light;
 
     struct PointLight {
         glm::vec3 position = {0.f, 0.f, 0.f};
@@ -3401,7 +3405,7 @@ namespace gvk {
         });
     }
 
-    void draw_mesh(shared_ptr<MeshAsset> mesh, Material material, glm::vec3 position = {0, 0, 0}, glm::vec3 scale = {1, 1, 1}, glm::quat rotation = {1, 0, 0, 0}) {
+    void draw_mesh(MeshAsset* mesh, Material material, glm::vec3 position = {0, 0, 0}, glm::vec3 scale = {1, 1, 1}, glm::quat rotation = {1, 0, 0, 0}) {
         render_queue.push_back(RenderQueueMesh{
             .mesh = mesh,
             .material = material,
@@ -4042,6 +4046,300 @@ namespace gvk {
         }
 
         return meshes;
+    }
+
+    struct GLTFReturnMesh {
+        MeshAsset mesh;
+        Material material;
+        glm::vec3 position;
+        glm::vec3 scale;
+        glm::quat rot;
+    };
+
+    struct GLTFReturns {
+        vector<GLTFReturnMesh> meshes;
+        vector<PointLight> point_lights;
+        vector<SpotLight> spot_lights;
+        DirectionalLight dir_light;
+    };
+
+    optional<GLTFReturns> load_gltf_scene(filesystem::path path) {
+        fmt::println("loading GLTF: {}", path.string());
+        tinygltf::TinyGLTF loader;
+        tinygltf::Model model;
+        string err, warn;
+        bool ok = (path.extension() == ".glb") ? loader.LoadBinaryFromFile(&model, &err, &warn, path.string()) : loader.LoadASCIIFromFile(&model, &err, &warn, path.string());
+        if (!warn.empty()) fmt::println("GLTF warning: {}", warn);
+        if (!err.empty()) fmt::println("GLTF error: {}", err);
+        if (!ok) {
+            fmt::println("failed to load GLTF: {}", path.string());
+        }
+        auto data_ptr = [&](const tinygltf::Accessor& acc) -> const uint8_t* {
+            const auto& bv = model.bufferViews[acc.bufferView];
+            const auto& buf = model.buffers[bv.buffer];
+            return buf.data.data() + bv.byteOffset + acc.byteOffset;
+        };
+        auto stride_of = [&](const tinygltf::Accessor& acc) -> size_t {
+            const auto& bv = model.bufferViews[acc.bufferView];
+            if (bv.byteStride != 0) return bv.byteStride;
+            return tinygltf::GetComponentSizeInBytes(acc.componentType) * tinygltf::GetNumComponentsInType(acc.type);
+        };
+
+        GLTFReturns result;
+        result.dir_light = DirectionalLight{};
+        vector<shared_ptr<MeshAsset>> loaded_meshes;
+
+        vector<Material> materials;
+        materials.resize(model.materials.size());
+
+        auto load_texture = [&](int tex_index, AllocatedImage fallback) -> AllocatedImage {
+            if (tex_index < 0 || tex_index >= (int)model.textures.size()) return fallback;
+            const auto& tex = model.textures[tex_index];
+            if (tex.source < 0 || tex.source >= (int)model.images.size()) return fallback;
+            const auto& img = model.images[tex.source];
+            if (img.image.empty()) return fallback;
+            VkExtent3D extent = { (uint32_t)img.width, (uint32_t)img.height, 1 };
+            return create_image((void*)img.image.data(), extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_SAMPLED_BIT);
+        };
+
+        for (size_t mi = 0; mi < model.materials.size(); mi++) {
+            const auto& mat = model.materials[mi];
+            float scalar_tint = 1.f;
+            float roughness = 1.f;
+            float metallic = 0.f;
+            if (mat.pbrMetallicRoughness.baseColorFactor.size() >= 3) {
+                scalar_tint = (float)mat.pbrMetallicRoughness.baseColorFactor[0];
+            }
+            if (mat.pbrMetallicRoughness.roughnessFactor >= 0.0) {
+                roughness = (float)mat.pbrMetallicRoughness.roughnessFactor;
+            }
+            if (mat.pbrMetallicRoughness.metallicFactor >= 0.0) {
+                metallic = (float)mat.pbrMetallicRoughness.metallicFactor;
+            }
+
+            AllocatedImage albedo = load_texture(mat.pbrMetallicRoughness.baseColorTexture.index, _white_image);
+            AllocatedImage normal = load_texture(mat.normalTexture.index, _white_image);
+            AllocatedImage roughness_map = load_texture(mat.pbrMetallicRoughness.metallicRoughnessTexture.index, _white_image);
+            AllocatedImage metallic_map = load_texture(mat.pbrMetallicRoughness.metallicRoughnessTexture.index, _black_image);
+            AllocatedImage emissive = load_texture(mat.emissiveTexture.index, _black_image);
+            AllocatedImage ao = load_texture(mat.occlusionTexture.index, _white_image);
+
+            materials[mi] = create_material(albedo, normal, roughness_map, metallic_map, emissive, ao, scalar_tint, roughness, metallic);
+        }
+
+        for (const tinygltf::Mesh& mesh : model.meshes) {
+            MeshAsset new_mesh;
+            new_mesh.name = mesh.name;
+            vector<uint32_t> indices;
+            vector<Vertex> vertices;
+
+            for (const tinygltf::Primitive& prim : mesh.primitives) {
+                GeoSurface new_surface;
+                new_surface.start_index = static_cast<uint32_t>(indices.size());
+
+                const size_t initial_vtx = vertices.size();
+                {
+                    const tinygltf::Accessor& acc = model.accessors[prim.indices];
+                    new_surface.count = static_cast<uint32_t>(acc.count);
+                    indices.reserve(indices.size() + acc.count);
+                    const uint8_t* idx_data = data_ptr(acc);
+
+                    switch (acc.componentType) {
+                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+                            for (size_t i = 0; i < acc.count; i++) indices.push_back(idx_data[i] + (uint32_t)initial_vtx);
+                            break;
+                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+                            for (size_t i = 0; i < acc.count; i++) indices.push_back(reinterpret_cast<const uint16_t*>(idx_data)[i] + (uint32_t)initial_vtx);
+                            break;
+                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
+                            for (size_t i = 0; i < acc.count; i++) indices.push_back(reinterpret_cast<const uint32_t*>(idx_data)[i] + (uint32_t)initial_vtx);
+                            break;
+                        default:
+                            fmt::println("GLTF: unsupported index component type {}", acc.componentType);
+                            return {};
+                    }
+                }
+                {
+                    auto it = prim.attributes.find("POSITION");
+                    if (it == prim.attributes.end()) {
+                        fmt::println("GLTF: primitive missing POSITION attribute");
+                        return {};
+                    }
+
+                    const tinygltf::Accessor& acc = model.accessors[it->second];
+                    const size_t s = stride_of(acc);
+                    const uint8_t* ptr = data_ptr(acc);
+                    vertices.resize(initial_vtx + acc.count);
+
+                    for (size_t i = 0; i < acc.count; i++) {
+                        Vertex vtx{};
+                        vtx.position = *reinterpret_cast<const glm::vec3*>(ptr + i * s);
+                        vtx.normal = {1, 0, 0};
+                        vtx.uv_x = 0;
+                        vtx.uv_y = 0;
+                        vtx.tangent = {1, 0, 0, 1};
+                        vertices[initial_vtx + i] = vtx;
+                    }
+                }
+                {
+                    auto it = prim.attributes.find("NORMAL");
+                    if (it != prim.attributes.end()) {
+                        const tinygltf::Accessor& acc = model.accessors[it->second];
+                        const size_t s = stride_of(acc);
+                        const uint8_t* ptr = data_ptr(acc);
+                        for (size_t i = 0; i < acc.count; i++) vertices[initial_vtx + i].normal = *reinterpret_cast<const glm::vec3*>(ptr + i * s);
+                    }
+                }
+                {
+                    auto it = prim.attributes.find("TEXCOORD_0");
+                    if (it != prim.attributes.end()) {
+                        const tinygltf::Accessor& acc = model.accessors[it->second];
+                        const size_t s = stride_of(acc);
+                        const uint8_t* ptr = data_ptr(acc);
+                        for (size_t i = 0; i < acc.count; i++) {
+                            const glm::vec2 uv = *reinterpret_cast<const glm::vec2*>(ptr + i * s);
+                            vertices[initial_vtx + i].uv_x = uv.x;
+                            vertices[initial_vtx + i].uv_y = uv.y;
+                        }
+                    }
+                }
+                {
+                    auto it = prim.attributes.find("TANGENT");
+                    if (it != prim.attributes.end()) {
+                        const tinygltf::Accessor& acc = model.accessors[it->second];
+                        const size_t s = stride_of(acc);
+                        const uint8_t* ptr = data_ptr(acc);
+                        for (size_t i = 0; i < acc.count; i++) {
+                            vertices[initial_vtx + i].tangent = *reinterpret_cast<const glm::vec4*>(ptr + i * s);
+                        }
+                    }
+                }
+                new_mesh.surfaces.push_back(new_surface);
+            }
+            calculate_AABB(new_mesh.AABB_min, new_mesh.AABB_max, vertices);
+
+            new_mesh.mesh_buffers = upload_mesh(indices, vertices);
+            loaded_meshes.emplace_back(make_shared<MeshAsset>(move(new_mesh)));
+        }
+
+        auto get_node_matrix = [](const tinygltf::Node& node) -> glm::mat4 {
+            if (node.matrix.size() == 16) {
+                glm::mat4 m(1.f);
+                for (int i = 0; i < 16; i++) m[i / 4][i % 4] = (float)node.matrix[i];
+                return m;
+            }
+            glm::mat4 t(1.f), r(1.f), s(1.f);
+            if (node.translation.size() == 3) {
+                t = glm::translate(glm::mat4(1.f), glm::vec3((float)node.translation[0], (float)node.translation[1], (float)node.translation[2]));
+            }
+            if (node.rotation.size() == 4) {
+                glm::quat q((float)node.rotation[3], (float)node.rotation[0], (float)node.rotation[1], (float)node.rotation[2]);
+                r = glm::mat4_cast(q);
+            }
+            if (node.scale.size() == 3) {
+                s = glm::scale(glm::mat4(1.f), glm::vec3((float)node.scale[0], (float)node.scale[1], (float)node.scale[2]));
+            }
+            return t * r * s;
+        };
+
+        function<void(int, glm::mat4)> process_node = [&](int node_idx, glm::mat4 parent) {
+            if (node_idx < 0 || node_idx >= (int)model.nodes.size()) return;
+            const tinygltf::Node& node = model.nodes[node_idx];
+            glm::mat4 local = get_node_matrix(node);
+            glm::mat4 world = parent * local;
+
+            glm::vec3 world_pos = glm::vec3(world[3]);
+
+            glm::vec3 world_scale;
+            world_scale.x = glm::length(glm::vec3(world[0]));
+            world_scale.y = glm::length(glm::vec3(world[1]));
+            world_scale.z = glm::length(glm::vec3(world[2]));
+
+            glm::mat3 rotm;
+            rotm[0] = glm::vec3(world[0]) / world_scale.x;
+            rotm[1] = glm::vec3(world[1]) / world_scale.y;
+            rotm[2] = glm::vec3(world[2]) / world_scale.z;
+            glm::quat world_rot = glm::quat_cast(rotm);
+
+            if (node.mesh >= 0 && node.mesh < (int)loaded_meshes.size()) {
+                GLTFReturnMesh rm;
+                rm.mesh = *loaded_meshes[node.mesh];
+
+                if (node.mesh < (int)model.meshes.size() && !model.meshes[node.mesh].primitives.empty()) {
+                    int mat_idx = model.meshes[node.mesh].primitives[0].material;
+
+                    if (mat_idx >= 0 && mat_idx < (int)materials.size()) {
+                        rm.material = materials[mat_idx];
+                    } else {
+                        rm.material = create_material(_white_image, _white_image, _white_image, _black_image, _black_image, _white_image);
+                    }
+                } else {
+                    rm.material = create_material(_white_image, _white_image, _white_image, _black_image, _black_image, _white_image);
+                }
+
+                rm.position = world_pos;
+                rm.scale = world_scale;
+                rm.rot = world_rot;
+                result.meshes.push_back(move(rm));
+            }
+
+            if (node.extensions.count("KHR_lights_punctual")) {
+                const auto& ext = node.extensions.at("KHR_lights_punctual");
+
+                if (ext.Has("light")) {
+                    int light_idx = ext.Get("light").GetNumberAsInt();
+
+                    if (light_idx >= 0 && light_idx < (int)model.lights.size()) {
+                        const auto& light = model.lights[light_idx];
+                        glm::vec3 col{1.f, 1.f, 1.f};
+                        if (light.color.size() >= 3) {
+                            col = glm::vec3((float)light.color[0], (float)light.color[1], (float)light.color[2]);
+                        }
+
+                        float intensity = (float)light.intensity;
+                        if (light.type == "directional") {
+                            result.dir_light.direction = world_rot * glm::vec3(0.f, 0.f, -1.f);
+                            result.dir_light.color = col;
+                            result.dir_light.intensity = intensity;
+                        } else if (light.type == "point") {
+                            PointLight pl;
+                            pl.position = world_pos;
+                            pl.color = col;
+                            pl.intensity = intensity;
+                            pl.range = light.range > 0.0 ? (float)light.range : 10.f;
+                            result.point_lights.push_back(pl);
+                        } else if (light.type == "spot") {
+                            SpotLight sl;
+                            sl.position = world_pos;
+                            sl.direction = world_rot * glm::vec3(0.f, 0.f, -1.f);
+                            sl.color = col;
+                            sl.intensity = intensity;
+                            sl.range = light.range > 0.0 ? (float)light.range : 10.f;
+                            result.spot_lights.push_back(sl);
+                        }
+                    }
+                }
+            }
+
+            for (int child : node.children) {
+                process_node(child, world);
+            }
+        };
+
+        if (!model.scenes.empty()) {
+            int scene_idx = model.defaultScene >= 0 ? model.defaultScene : 0;
+            if (scene_idx < (int)model.scenes.size()) {
+                for (int root : model.scenes[scene_idx].nodes) {
+                    process_node(root, glm::mat4(1.f));
+                }
+            }
+        } else {
+            for (size_t i = 0; i < model.nodes.size(); i++) {
+                process_node((int)i, glm::mat4(1.f));
+            }
+        }
+
+        return result;
     }
 
     void init() {

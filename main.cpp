@@ -102,6 +102,17 @@ int main() {
     Material monkeymat = gvk::create_material(monkey_texture, water_normal, gvk::_white_image, gvk::_black_image, gvk::_black_image, gvk::_black_image);
     Material teapotmat = gvk::create_material(gvk::_error_checkerboard_image, water_normal, gvk::_white_image, gvk::_black_image, gvk::_black_image, gvk::_black_image);
 
+    gvk::GLTFReturns scene1 = gvk::load_gltf_scene("../scene.glb").value();
+    for (auto pl : scene1.point_lights) {
+        gvk::point_lights.push_back(pl);
+    }
+    for (auto sl : scene1.spot_lights) {
+        gvk::spot_lights.push_back(sl);
+    }
+    if (&scene1.dir_light != nullptr) {
+        gvk::directional_light = scene1.dir_light;
+    }
+
     bool running = true;
     while (running) {
         Uint64 now = SDL_GetTicks();
@@ -349,13 +360,20 @@ int main() {
         }
 
         ImGui::End();
+        // RENDER
         ImGui::Render();
 
+        /*
         for (auto inst : monkeyinstances) {
             gvk::draw_mesh(test_meshes[0], monkeymat, inst.pos, inst.scale, glm::quat(inst.rot));
         }
         for (auto inst : teapotinstances) {
             gvk::draw_mesh(test_meshes[1], teapotmat, inst.pos, inst.scale, glm::quat(inst.rot));
+        }
+        */
+
+        for (auto& mesh : scene1.meshes) {
+            gvk::draw_mesh(&mesh.mesh, mesh.material, mesh.position, mesh.scale, mesh.rot);
         }
 
         gvk::draw();
