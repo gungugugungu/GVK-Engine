@@ -2791,6 +2791,8 @@ namespace gvk {
             vkCmdDraw(cmd, 3, 1, 0, 0);
 
             vkCmdEndRendering(cmd);
+
+            // TODO: ssao composite
         }
 
         void init() {
@@ -4452,7 +4454,7 @@ namespace gvk {
                             col = glm::vec3((float)light.color[0], (float)light.color[1], (float)light.color[2]);
                         }
 
-                        float intensity = (float)light.intensity;
+                        float intensity = static_cast<float>(light.intensity);
                         if (light.type == "directional") {
                             result.dir_light.direction = world_rot * glm::vec3(0.f, 0.f, -1.f);
                             result.dir_light.color = col;

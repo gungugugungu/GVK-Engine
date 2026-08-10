@@ -1,6 +1,6 @@
 #version 460
 
-layout(set = 0, binding = 0) uniform sampler2D depth_image;
+layout(set = 0, binding = 0) uniform sampler2DMS depth_image;
 
 layout(push_constant) uniform SSAOCompositeParams {
     float radius;
@@ -24,6 +24,10 @@ vec3( 0.2663, -0.0058, -0.0343), vec3(-0.0199, 0.0223, -0.2024),
 vec3( 0.0132, -0.0236, 0.2041), vec3(-0.1786, 0.1065, -0.0101)
 );
 
+float sample_depth(ivec2 coord) {
+    return texelFetch(depth_image, coord, 0).r;
+}
+
 float linearize_reversed_depth(float d, float near, float far) {
     float denom = max((near + d * (far - near)), 1e-6);
     float viewZ = (near * far) / denom;
@@ -41,13 +45,13 @@ vec3 reconstruct_view_pos(vec2 uvcoord, float depth_sample) {
 }
 
 vec3 estimate_normal(vec2 uvcoord, float center_depth) {
-    ivec2 tex_size = textureSize(depth_image, 0);
-    vec2 px = 1.0 / vec2(tex_size);
-    float depth_r = texture(depth_image, uvcoord + vec2(px.x, 0.0)).r;
-    float depth_u = texture(depth_image, uvcoord + vec2(0.0, px.y)).r;
-    vec3 p = reconstruct_view_pos(uvcoord, center_depth);
-    vec3 pr = reconstruct_view_pos(uvcoord + vec2(px.x, 0.0), depth_r);
-    vec3 pu = reconstruct_view_pos(uvcoord + vec2(0.0, px.y), depth_u);
+    ivec2 tex_size = textureSize(depth_image);
+    ivec2 center = ivec2(uvcoord * vec2(tex_size));
+    float depth_r = sample_depth(center + ivec2(1, 0));
+    float depth_u = sample_depth(center + ivec2(0, 1));
+    vec3 p = reconstruct_view_pos(uvcoord,center_depth);
+    vec3 pr = reconstruct_view_pos(uvcoord+vec2(1.0/tex_size.x, 0.0), depth_r);
+    vec3 pu = reconstruct_view_pos(uvcoord+vec2(0.0, 1.0/tex_size.y), depth_u);
     vec3 vx = pr - p;
     vec3 vy = pu - p;
     vec3 n = normalize(cross(vx, vy));
@@ -63,7 +67,7 @@ vec2 project_view_to_uv(vec3 viewPos) {
 }
 
 vec3 sample_noise(vec2 uv) {
-    ivec2 tex_size = textureSize(depth_image, 0);
+    ivec2 tex_size = textureSize(depth_image);
     vec2 p = uv * vec2(tex_size);
     float n = sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453;
     float angle = fract(n) * 6.28318;
@@ -71,9 +75,11 @@ vec3 sample_noise(vec2 uv) {
 }
 
 void main() {
-    ivec2 tex_size = textureSize(depth_image, 0);
-    vec2 uv = gl_FragCoord.xy / vec2(tex_size);
-    float d = texture(depth_image, uv).r;
+    ivec2 tex_size = textureSize(depth_image);
+    ivec2 coord = ivec2(gl_FragCoord.xy);
+    vec2 uv = (vec2(coord) + 0.5) / vec2(tex_size);
+
+    float d = sample_depth(coord);
 
     if (d >= 0.9999) {
         out_color = vec4(1.0);
@@ -104,7 +110,8 @@ void main() {
 
         if (sampleUV.x < 0.0 || sampleUV.x > 1.0 || sampleUV.y < 0.0 || sampleUV.y > 1.0) continue;
 
-        float sampleDepthTex = texture(depth_image, sampleUV).r;
+        ivec2 sampleCoord = clamp(ivec2(sampleUV * vec2(textureSize(depth_image))), ivec2(0), textureSize(depth_image) - 1);
+        float sampleDepthTex = sample_depth(sampleCoord);
         float sampleDepthViewZ = linearize_reversed_depth(sampleDepthTex, ssao.u_near, ssao.u_far);
         float samplePosViewZ = -samplePos.z;
 
