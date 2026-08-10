@@ -7,15 +7,6 @@
 
 /*
 TODO FEATURES:
- - 8. lighting
-    - gpu scene data uniform buffer
-    - ambient light
-    - directional light
-    - point lights
-    - tangent space normal mapping
-    - tangent generation in gltf loading
-    - dynamic light count
-    - proper api for handling lights
  - 9. shadow mapping
     - depth-only pipeline
     - shadow map image
