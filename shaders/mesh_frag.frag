@@ -128,11 +128,15 @@ void main()
     float metallic = clamp(metallicTex * MaterialPushConstants.metallic, 0.0, 1.0);
 
     vec3 N = normalize(world_normal);
-    vec3 T = normalize(world_tangent.xyz);
+    vec3 T = world_tangent.xyz;
+
+    if (abs(dot(normalize(T), N)) > 0.999) {
+        T = (abs(N.y) < 0.999) ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    }
     T = normalize(T - N * dot(N, T));
     vec3 B = cross(N, T) * world_tangent.w;
-    vec3 tangentNormal = texture(normal_map, uv).xyz * 2.0 - 1.0;
     mat3 TBN = mat3(T, B, N);
+    vec3 tangentNormal = texture(normal_map, uv).xyz * 2.0 - 1.0;
     N = normalize(TBN * tangentNormal);
     vec3 V = normalize(directionalLight.light.camera_pos - world_pos);
 
