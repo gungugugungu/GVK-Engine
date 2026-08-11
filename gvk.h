@@ -1781,12 +1781,16 @@ namespace gvk {
 
         // ssao
         AllocatedImage _ao_out_image;
+        AllocatedImage _ao_out_image_2;
         VkPipeline _ao_pipeline;
         VkPipelineLayout _ao_pipeline_layout;
         VkDescriptorSetLayout _ao_descriptor_layout;
-        float ao_radius = 0.3f;
-        float ao_bias = 0.025f;
-        int ao_samples = 64;
+        VkPipeline _ao_comp_pipeline;
+        VkPipelineLayout _ao_comp_pipeline_layout;
+        VkDescriptorSetLayout _ao_comp_descriptor_layout;
+        float ao_radius = 0.8f;
+        float ao_bias = 0.02f;
+        int ao_samples = 16;
 
         struct TonemapPushConstants {
             float temp = 0.f;
@@ -2665,6 +2669,7 @@ namespace gvk {
             float radius;
             float bias;
             int samples;
+            int _pad;
             glm::vec2 proj;
             float u_near;
             float u_far;
@@ -2740,8 +2745,61 @@ namespace gvk {
 
             VK_CHECK(vkCreateImageView(_vk_device, &rview_info, nullptr, &_ao_out_image.image_view));
 
+            _ao_out_image_2.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+            _ao_out_image_2.extent = ao_out_extent;
+            _ao_out_image_2.mipmaps = 1;
+
+            VkImageCreateInfo rimg_info2 = image_create_info(_ao_out_image_2.format, _ao_out_image_usages, ao_out_extent);
+
+            vmaCreateImage(_allocator, &rimg_info2, &rimg_allocinfo, &_ao_out_image_2.image, &_ao_out_image_2.allocation, nullptr);
+            VkImageViewCreateInfo rview_info2 = imageview_create_info(_ao_out_image_2.format, _ao_out_image_2.image, _ao_out_image_2.mipmaps, VK_IMAGE_ASPECT_COLOR_BIT);
+
+            VK_CHECK(vkCreateImageView(_vk_device, &rview_info2, nullptr, &_ao_out_image_2.image_view));
+
             _main_deletion_queue.push_function([&]() {
                 destroy_image(_ao_out_image);
+                destroy_image(_ao_out_image_2);
+                vkDestroyPipelineLayout(_vk_device, _ao_pipeline_layout, nullptr);
+                vkDestroyPipeline(_vk_device, _ao_pipeline, nullptr);
+                vkDestroyDescriptorSetLayout(_vk_device, _ao_descriptor_layout, nullptr);
+            });
+
+            // composite
+            DescriptorLayoutBuilder comp_builder;
+            comp_builder.add_binding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            comp_builder.add_binding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            _ao_comp_descriptor_layout = comp_builder.build(_vk_device, VK_SHADER_STAGE_FRAGMENT_BIT);
+
+            VkPipelineLayoutCreateInfo comp_layout_info = pipeline_layout_create_info();
+            comp_layout_info.setLayoutCount = 1;
+            comp_layout_info.pSetLayouts = &_ao_comp_descriptor_layout;
+            comp_layout_info.pushConstantRangeCount = 0;
+            vkCreatePipelineLayout(_vk_device, &comp_layout_info, nullptr, &_ao_comp_pipeline_layout);
+
+            VkShaderModule comp_vert_shader, comp_frag_shader;
+            if (!load_shader_module("../shaders/fullscreen_triangle.vert.spv", _vk_device, &comp_vert_shader)) {
+                cout << "error when loading ao comp vert (aka fullscreen triangle) shader" << endl;
+            }
+            if (!load_shader_module("../shaders/ao_composite.frag.spv", _vk_device, &comp_frag_shader)) {
+                cout << "error when loading ao comp frag shader" << endl;
+            }
+
+            PipelineBuilder comp_pip_builder;
+            comp_pip_builder._pipeline_layout = _ao_comp_pipeline_layout;
+            comp_pip_builder.set_shaders(comp_vert_shader, comp_frag_shader);
+            comp_pip_builder.set_input_topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+            comp_pip_builder.set_polygon_mode(VK_POLYGON_MODE_FILL);
+            comp_pip_builder.set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE);
+            comp_pip_builder.set_multisampling_none();
+            comp_pip_builder.disable_blending();
+            comp_pip_builder.disable_depthtest();
+            comp_pip_builder.set_color_attachment_format(_draw_image.format);
+            _ao_comp_pipeline = comp_pip_builder.build_pipeline(_vk_device);
+
+            vkDestroyShaderModule(_vk_device, comp_vert_shader, nullptr);
+            vkDestroyShaderModule(_vk_device, comp_frag_shader, nullptr);
+
+            _main_deletion_queue.push_function([&]() {
                 vkDestroyPipelineLayout(_vk_device, _ao_pipeline_layout, nullptr);
                 vkDestroyPipeline(_vk_device, _ao_pipeline, nullptr);
                 vkDestroyDescriptorSetLayout(_vk_device, _ao_descriptor_layout, nullptr);
@@ -2792,7 +2850,54 @@ namespace gvk {
 
             vkCmdEndRendering(cmd);
 
-            // TODO: ssao composite
+            transition_image(cmd, _ao_out_image.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+            blur_image(cmd, _ao_out_image, 4);
+
+            // composite using the bloom composite thing
+            transition_image(cmd, _ao_out_image_2.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+            VkRenderingAttachmentInfo comp_color_attach = attachment_info(_ao_out_image_2.image_view, &clear, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+            VkRenderingInfo comp_render_info = {};
+            comp_render_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+            comp_render_info.pNext = nullptr;
+            comp_render_info.renderArea = VkRect2D{VkOffset2D{0, 0}, extent};
+            comp_render_info.layerCount = 1;
+            comp_render_info.colorAttachmentCount = 1;
+            comp_render_info.pColorAttachments = &comp_color_attach;
+            comp_render_info.pDepthAttachment = nullptr;
+            comp_render_info.pStencilAttachment = nullptr;
+
+            vkCmdBeginRendering(cmd, &comp_render_info);
+
+            vkCmdSetViewport(cmd, 0, 1, &vp);
+
+            vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _ao_comp_pipeline);
+
+            VkDescriptorSet ao_comp_set = get_current_frame()._frame_descriptors.allocate(_vk_device, _ao_comp_descriptor_layout, nullptr);
+            DescriptorWriter comp_writer;
+            comp_writer.write_image(0, source_image.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            comp_writer.write_image(1, _ao_out_image.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            comp_writer.update_set(_vk_device, ao_comp_set);
+
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _ao_comp_pipeline_layout, 0, 1, &ao_comp_set, 0, nullptr);
+
+            vkCmdDraw(cmd, 3, 1, 0, 0);
+
+            vkCmdEndRendering(cmd);
+
+            transition_image(cmd, _ao_out_image_2.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            transition_image(cmd, source_image.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+            VkExtent2D blit_src_extent = { _ao_out_image_2.extent.width, _ao_out_image_2.extent.height };
+            VkExtent2D blit_dst_extent = { source_image.extent.width, source_image.extent.height };
+            copy_image_to_image(cmd, _ao_out_image_2.image, source_image.image, blit_src_extent, blit_dst_extent);
+
+            transition_image(cmd, source_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            transition_image(cmd, _ao_out_image_2.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         }
 
         void init() {
@@ -2804,7 +2909,7 @@ namespace gvk {
             out_image_extent.height = static_cast<uint32_t>(w_height);
             out_image_extent.depth = 1;
 
-            out_image.format = VK_FORMAT_R8G8B8A8_SRGB;
+            out_image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
             out_image.extent = out_image_extent;
             out_image.mipmaps = 1;
 

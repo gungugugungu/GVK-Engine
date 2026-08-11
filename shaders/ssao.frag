@@ -54,7 +54,7 @@ vec3 estimate_normal(vec2 uvcoord, float center_depth) {
     vec3 pu = reconstruct_view_pos(uvcoord+vec2(0.0, 1.0/tex_size.y), depth_u);
     vec3 vx = pr - p;
     vec3 vy = pu - p;
-    vec3 n = normalize(cross(vx, vy));
+    vec3 n = normalize(cross(vy, vx));
     if(length(n) < 1e-3) return vec3(0.0, 0.0, 1.0);
     return n;
 }
@@ -81,7 +81,7 @@ void main() {
 
     float d = sample_depth(coord);
 
-    if (d >= 0.9999) {
+    if (d <= 0.0001) {
         out_color = vec4(1.0);
         return;
     }
