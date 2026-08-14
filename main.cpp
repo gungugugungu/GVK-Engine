@@ -65,12 +65,16 @@ int main() {
     vector<shared_ptr<MeshAsset>> test_meshes = gvk::load_gltf_meshes("../test_monkey.glb").value();
 
     // skinned mesh
-    gvk::SkinnedGLTFData _gordon_freeman_returns = gvk::load_gltf_meshes_skinned("../gordon.glb").value();
+    gvk::SkinnedGLTFData _gordon_freeman_returns = gvk::load_gltf_meshes_skinned("../human.glb").value();
     SkinnedMeshAsset* gordon_freeman = _gordon_freeman_returns.meshes[0].get();
     gordon_freeman->skin = &_gordon_freeman_returns.skins[0];
     SkinnedInstance instance;
     instance.asset = gordon_freeman;
-    instance.clip = &_gordon_freeman_returns.animations[0];
+    if (!_gordon_freeman_returns.animations.empty()) {
+        instance.clip = &_gordon_freeman_returns.animations[0];
+    } else {
+        instance.clip = nullptr;
+    }
     instance.current_time = 0.f;
     instance.joint_matrices.resize(_gordon_freeman_returns.skins[0].joint_count);
 

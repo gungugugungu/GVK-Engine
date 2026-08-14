@@ -798,8 +798,12 @@ struct MeshAsset {
 
 struct SkinnedVertex {
     glm::vec3 position;
+    float pad0;
     glm::vec3 normal;
+    float pad1;
     glm::vec2 uv;
+    float pad2;
+    float pad3;
     glm::vec4 tangent;
     uint32_t joints[4];
     float weights[4];
@@ -873,15 +877,23 @@ glm::quat sample_quat(const std::vector<float>& times, const std::vector<glm::qu
 }
 
 void evaluate_pose(SkinnedInstance& instance) {
-    if (!instance.asset || !instance.asset->skin || !instance.clip) return;
+    if (!instance.asset || !instance.asset->skin) return;
 
     Skin* skin = instance.asset->skin;
-    AnimationClip* clip = instance.clip;
     int joint_count = skin->joint_count;
 
     if (instance.joint_matrices.size() != static_cast<size_t>(joint_count)) {
         instance.joint_matrices.resize(joint_count);
     }
+
+    if (!instance.clip) {
+        for (int j = 0; j < joint_count; ++j) {
+            instance.joint_matrices[j] = glm::mat4(1.0f);
+        }
+        return;
+    }
+
+    AnimationClip* clip = instance.clip;
 
     float t = instance.current_time;
     if (clip->duration > 0.0f) {
@@ -3203,8 +3215,18 @@ namespace gvk {
         if (matrices.empty()) return 0;
 
         size_t size = matrices.size() * sizeof(glm::mat4);
-        AllocatedBuffer buf = create_buffer(size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-        memcpy(buf.info.pMappedData, matrices.data(), size);
+        AllocatedBuffer buf = create_buffer(size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
+
+        AllocatedBuffer staging = create_buffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
+        memcpy(staging.info.pMappedData, matrices.data(), size);
+
+        immediate_submit([&](VkCommandBuffer cmd) {
+            VkBufferCopy copy{0};
+            copy.size = size;
+            vkCmdCopyBuffer(cmd, staging.buffer, buf.buffer, 1, &copy);
+        });
+
+        destroy_buffer(staging);
 
         get_current_frame()._deletion_queue.push_function([=]() {
             destroy_buffer(buf);
