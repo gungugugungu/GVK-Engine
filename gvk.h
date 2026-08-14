@@ -796,6 +796,152 @@ struct MeshAsset {
     glm::vec3 AABB_max;
 };
 
+struct SkinnedVertex {
+    glm::vec3 position;
+    glm::vec3 normal;
+    glm::vec2 uv;
+    glm::vec4 tangent;
+    uint32_t joints[4];
+    float weights[4];
+};
+
+struct Skin {
+    std::vector<glm::mat4> inverse_bind_matrices;
+    std::vector<int> parent_indices;
+    int joint_count;
+};
+
+struct AnimationClip {
+    float duration;
+    struct JointTrack {
+        std::vector<float> timesT, timesR, timesS;
+        std::vector<glm::vec3> translations;
+        std::vector<glm::quat> rotations;
+        std::vector<glm::vec3> scales;
+    };
+    std::vector<JointTrack> joints;
+};
+
+struct SkinnedMeshAsset {
+    string name;
+    vector<GeoSurface> surfaces;
+    GPUMeshBuffers mesh_buffers;
+    glm::vec3 AABB_min;
+    glm::vec3 AABB_max;
+    Skin* skin = nullptr;
+};
+
+struct SkinnedInstance {
+    SkinnedMeshAsset* asset = nullptr;
+    AnimationClip* clip = nullptr;
+    float current_time = 0.0f;
+    std::vector<glm::mat4> joint_matrices;
+};
+
+glm::vec3 sample_vec3(const std::vector<float>& times, const std::vector<glm::vec3>& values, float t) {
+    if (times.empty() || values.empty()) return glm::vec3(0.0f);
+    if (t <= times.front()) return values.front();
+    if (t >= times.back()) return values.back();
+
+    size_t i = 0;
+    while (i + 1 < times.size() && times[i + 1] < t) ++i;
+
+    float t0 = times[i];
+    float t1 = times[i + 1];
+    float alpha = (t - t0) / (t1 - t0);
+
+    return glm::mix(values[i], values[i + 1], alpha);
+}
+
+glm::quat sample_quat(const std::vector<float>& times, const std::vector<glm::quat>& values, float t) {
+    if (times.empty() || values.empty()) return glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+    if (t <= times.front()) return values.front();
+    if (t >= times.back()) return values.back();
+
+    size_t i = 0;
+    while (i + 1 < times.size() && times[i + 1] < t) ++i;
+
+    float t0 = times[i];
+    float t1 = times[i + 1];
+    float alpha = (t - t0) / (t1 - t0);
+
+    glm::quat q0 = values[i];
+    glm::quat q1 = values[i + 1];
+    if (glm::dot(q0, q1) < 0.0f) q1 = -q1;
+
+    return glm::normalize(glm::mix(q0, q1, alpha));
+}
+
+void evaluate_pose(SkinnedInstance& instance) {
+    if (!instance.asset || !instance.asset->skin || !instance.clip) return;
+
+    Skin* skin = instance.asset->skin;
+    AnimationClip* clip = instance.clip;
+    int joint_count = skin->joint_count;
+
+    if (instance.joint_matrices.size() != static_cast<size_t>(joint_count)) {
+        instance.joint_matrices.resize(joint_count);
+    }
+
+    float t = instance.current_time;
+    if (clip->duration > 0.0f) {
+        t = fmod(t, clip->duration);
+        if (t < 0.0f) t += clip->duration;
+    }
+
+    std::vector<glm::mat4> local_matrices(joint_count, glm::mat4(1.0f));
+    std::vector<glm::mat4> global_matrices(joint_count, glm::mat4(1.0f));
+
+    for (int j = 0; j < joint_count; ++j) {
+        glm::vec3 translation(0.0f);
+        glm::quat rotation(1.0f, 0.0f, 0.0f, 0.0f);
+        glm::vec3 scale(1.0f);
+
+        if (j < static_cast<int>(clip->joints.size())) {
+            const auto& track = clip->joints[j];
+            translation = sample_vec3(track.timesT, track.translations, t);
+            rotation = sample_quat(track.timesR, track.rotations, t);
+            scale = sample_vec3(track.timesS, track.scales, t);
+        }
+
+        glm::mat4 T = glm::translate(glm::mat4(1.0f), translation);
+        glm::mat4 R = glm::mat4_cast(rotation);
+        glm::mat4 S = glm::scale(glm::mat4(1.0f), scale);
+        local_matrices[j] = T * R * S;
+    }
+
+    std::vector<bool> computed(joint_count, false);
+    int remaining = joint_count;
+    while (remaining > 0) {
+        bool progress = false;
+        for (int j = 0; j < joint_count; ++j) {
+            if (computed[j]) continue;
+            int parent = skin->parent_indices[j];
+            if (parent < 0 || parent >= joint_count || computed[parent]) {
+                if (parent < 0 || parent >= joint_count)
+                    global_matrices[j] = local_matrices[j];
+                else
+                    global_matrices[j] = global_matrices[parent] * local_matrices[j];
+                computed[j] = true;
+                --remaining;
+                progress = true;
+            }
+        }
+        if (!progress) break;
+    }
+
+    for (int j = 0; j < joint_count; ++j) {
+        instance.joint_matrices[j] = global_matrices[j] * skin->inverse_bind_matrices[j];
+    }
+}
+
+struct SkinnedGPUDrawPushConstants {
+    glm::mat4 model_matrix;
+    glm::mat4 render_matrix;
+    VkDeviceAddress vertex_buffer;
+    VkDeviceAddress joint_buffer;
+};
+
 struct GPUSceneData {
     glm::mat4 view;
     glm::mat4 proj;
@@ -995,6 +1141,15 @@ struct RenderQueueMesh {
     glm::vec3 position;
     glm::vec3 scale;
     glm::quat rotation;
+};
+
+struct RenderQueueSkinned {
+    SkinnedMeshAsset* mesh;
+    Material material;
+    glm::vec3 position;
+    glm::vec3 scale;
+    glm::quat rotation;
+    VkDeviceAddress joint_buffer;
 };
 
 struct Plane {
@@ -1243,6 +1398,7 @@ namespace gvk {
     } camera;
 
     inline vector<RenderQueueMesh> render_queue;
+    inline vector<RenderQueueSkinned> render_queue_skinned;
 
     inline glm::vec4 clear_color = {0.f, 0.f, 0.f, 1.f};
     inline float fov = 65.f;
@@ -1306,6 +1462,9 @@ namespace gvk {
         glm::vec3 color = {1.f, 1.f, 1.f};
         float intensity = 0.2f;
     } ambient_light;
+
+    inline VkPipelineLayout _skinned_mesh_pipeline_layout;
+    inline VkPipeline _skinned_mesh_pipeline;
 
     void immediate_submit(function<void(VkCommandBuffer cmd)>&& function) {
         vkWaitForFences(_vk_device, 1, &_imm_fence, VK_TRUE, UINT64_MAX);
@@ -3040,6 +3199,24 @@ namespace gvk {
         return new_surface;
     }
 
+    VkDeviceAddress upload_joint_matrices(const std::vector<glm::mat4>& matrices) {
+        if (matrices.empty()) return 0;
+
+        size_t size = matrices.size() * sizeof(glm::mat4);
+        AllocatedBuffer buf = create_buffer(size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+        memcpy(buf.info.pMappedData, matrices.data(), size);
+
+        get_current_frame()._deletion_queue.push_function([=]() {
+            destroy_buffer(buf);
+        });
+
+        VkBufferDeviceAddressInfo address_info = {};
+        address_info.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO;
+        address_info.buffer = buf.buffer;
+
+        return vkGetBufferDeviceAddress(_vk_device, &address_info);
+    }
+
     void init_skybox() {
         vector<Vertex> skybox_vertices_as_proper_struct_because_im_lazy_to_hardcode_them;
         for (int i = 0; i<(static_cast<int>(skybox_vertices.size())-2); i=i+3) {
@@ -3668,6 +3845,63 @@ namespace gvk {
         });
     }
 
+    void init_skinned_mesh_pipeline() {
+        VkShaderModule skinnedFragShader;
+        if (!load_shader_module("../shaders/skinned_mesh_frag.frag.spv", _vk_device, &skinnedFragShader)) {
+            fmt::println("error when building the skinned mesh fragment shader");
+        }
+
+        VkShaderModule skinnedVertexShader;
+        if (!load_shader_module("../shaders/skinned_mesh_vertex.vert.spv", _vk_device, &skinnedVertexShader)) {
+            fmt::println("error when building the skinned mesh vertex shader module");
+        }
+
+        VkPushConstantRange bufferRange{};
+        bufferRange.offset = 0;
+        bufferRange.size = sizeof(SkinnedGPUDrawPushConstants);
+        bufferRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+        VkPushConstantRange material_buffer_range{};
+        material_buffer_range.offset = sizeof(SkinnedGPUDrawPushConstants);
+        material_buffer_range.size = sizeof(MaterialPushConstants);
+        material_buffer_range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+        VkPushConstantRange ranges[] = {bufferRange, material_buffer_range};
+        VkDescriptorSetLayout layouts[] = {_mesh_descriptor_layout, _light_descriptor_layout};
+        VkPipelineLayoutCreateInfo pipeline_layout_info = pipeline_layout_create_info();
+        pipeline_layout_info.pPushConstantRanges = ranges;
+        pipeline_layout_info.pushConstantRangeCount = 2;
+        pipeline_layout_info.pSetLayouts = layouts;
+        pipeline_layout_info.setLayoutCount = 2;
+
+        VK_CHECK(vkCreatePipelineLayout(_vk_device, &pipeline_layout_info, nullptr, &_skinned_mesh_pipeline_layout));
+
+        PipelineBuilder pipelineBuilder;
+
+        pipelineBuilder._pipeline_layout = _skinned_mesh_pipeline_layout;
+        pipelineBuilder.set_shaders(skinnedVertexShader, skinnedFragShader);
+        pipelineBuilder.set_input_topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+        pipelineBuilder.set_polygon_mode(VK_POLYGON_MODE_FILL);
+        pipelineBuilder.set_cull_mode(VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE);
+        pipelineBuilder.enable_multisampling(msaa_sample_count);
+        pipelineBuilder.enable_blending_alphablend();
+
+        pipelineBuilder.enable_depthtest(true, VK_COMPARE_OP_GREATER_OR_EQUAL);
+
+        pipelineBuilder.set_color_attachment_format(_draw_image.format);
+        pipelineBuilder.set_depth_format(_depth_image.format);
+
+        _skinned_mesh_pipeline = pipelineBuilder.build_pipeline(_vk_device);
+
+        vkDestroyShaderModule(_vk_device, skinnedFragShader, nullptr);
+        vkDestroyShaderModule(_vk_device, skinnedVertexShader, nullptr);
+
+        _main_deletion_queue.push_function([&]() {
+            vkDestroyPipelineLayout(_vk_device, _skinned_mesh_pipeline_layout, nullptr);
+            vkDestroyPipeline(_vk_device, _skinned_mesh_pipeline, nullptr);
+        });
+    }
+
     void draw_mesh(MeshAsset* mesh, Material material, glm::vec3 position = {0, 0, 0}, glm::vec3 scale = {1, 1, 1}, glm::quat rotation = {1, 0, 0, 0}) {
         render_queue.push_back(RenderQueueMesh{
             .mesh = mesh,
@@ -3680,6 +3914,23 @@ namespace gvk {
 
     void draw_mesh(RenderQueueMesh render_queue_mesh) {
         render_queue.push_back(render_queue_mesh);
+    }
+
+    void draw_skinned_mesh(SkinnedMeshAsset* mesh, Material material, const std::vector<glm::mat4>& joint_matrices, glm::vec3 position = {0.f, 0.f, 0.f}, glm::vec3 scale = {1.f, 1.f, 1.f}, glm::quat rotation = {1.f, 0.f, 0.f, 0.f}) {
+        VkDeviceAddress joint_addr = upload_joint_matrices(joint_matrices);
+        render_queue_skinned.push_back(RenderQueueSkinned{
+            .mesh = mesh,
+            .material = material,
+            .position = position,
+            .scale = scale,
+            .rotation = rotation,
+            .joint_buffer = joint_addr
+        });
+    }
+
+    void draw_skinned_mesh(SkinnedInstance& instance, Material material, glm::vec3 position = {0.f, 0.f, 0.f}, glm::vec3 scale = {1.f, 1.f, 1.f}, glm::quat rotation = {1.f, 0.f, 0.f, 0.f}) {
+        evaluate_pose(instance);
+        draw_skinned_mesh(instance.asset, material, instance.joint_matrices, position, scale, rotation);
     }
 
     void draw_skybox_pass(VkCommandBuffer cmd) {
@@ -3879,6 +4130,32 @@ namespace gvk {
             }
         }
 
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _skinned_mesh_pipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _skinned_mesh_pipeline_layout, 1, 1, &light_set, 0, nullptr);
+
+        SkinnedGPUDrawPushConstants skinned_push_constants;
+
+        for (RenderQueueSkinned m : render_queue_skinned) {
+            glm::mat4 model = glm::translate(glm::mat4(1.f), m.position) * (glm::mat4_cast(m.rotation) * glm::scale(glm::mat4(1.f), m.scale));
+            MaterialPushConstants material_push_constants;
+            material_push_constants.roughness = m.material.roughness;
+            material_push_constants.metallic = m.material.metallic;
+            material_push_constants.scalar_tint = m.material.scalar_tint;
+
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _skinned_mesh_pipeline_layout, 0, 1, &m.material.descriptor_set, 0, nullptr);
+
+            skinned_push_constants.model_matrix = model;
+            skinned_push_constants.render_matrix = projection * view * model;
+            skinned_push_constants.vertex_buffer = m.mesh->mesh_buffers.vertex_buffer_address;
+            skinned_push_constants.joint_buffer = m.joint_buffer;
+
+            vkCmdPushConstants(cmd, _skinned_mesh_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(SkinnedGPUDrawPushConstants), &skinned_push_constants);
+            vkCmdPushConstants(cmd, _skinned_mesh_pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(SkinnedGPUDrawPushConstants), sizeof(MaterialPushConstants), &material_push_constants);
+            vkCmdBindIndexBuffer(cmd, m.mesh->mesh_buffers.index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+
+            vkCmdDrawIndexed(cmd, m.mesh->surfaces[0].count, 1, m.mesh->surfaces[0].start_index, 0, 0);
+        }
+
         vkCmdEndRendering(cmd);
     }
 
@@ -3912,10 +4189,6 @@ namespace gvk {
         vkCmdDraw(cmd, 3, 1, 0, 0);
 
         vkCmdEndRendering(cmd);
-    }
-
-    void init_pipelines() {
-        init_mesh_pipeline();
     }
 
     void init_descriptors() {
@@ -4605,6 +4878,521 @@ namespace gvk {
         return result;
     }
 
+    std::vector<Skin> load_gltf_skins(const tinygltf::Model& model) {
+        std::vector<Skin> skins;
+        for (const auto& gltf_skin : model.skins) {
+            Skin skin;
+            skin.joint_count = static_cast<int>(gltf_skin.joints.size());
+            skin.parent_indices.assign(skin.joint_count, -1);
+            skin.inverse_bind_matrices.assign(skin.joint_count, glm::mat4(1.0f));
+
+            std::unordered_map<int, int> node_to_joint;
+            for (int j = 0; j < skin.joint_count; j++) {
+                node_to_joint[gltf_skin.joints[j]] = j;
+            }
+
+            if (gltf_skin.inverseBindMatrices >= 0) {
+                const tinygltf::Accessor& acc = model.accessors[gltf_skin.inverseBindMatrices];
+                const tinygltf::BufferView& bv = model.bufferViews[acc.bufferView];
+                const tinygltf::Buffer& buf = model.buffers[bv.buffer];
+                const float* data = reinterpret_cast<const float*>(buf.data.data() + bv.byteOffset + acc.byteOffset);
+                for (int i = 0; i < skin.joint_count; i++) {
+                    glm::mat4 m(1.0f);
+                    for (int c = 0; c < 16; c++) {
+                        m[c / 4][c % 4] = data[i * 16 + c];
+                    }
+                    skin.inverse_bind_matrices[i] = m;
+                }
+            }
+
+            std::vector<int> node_parent(model.nodes.size(), -1);
+            for (size_t i = 0; i < model.nodes.size(); i++) {
+                for (int child : model.nodes[i].children) {
+                    if (child >= 0 && child < static_cast<int>(model.nodes.size())) {
+                        node_parent[child] = static_cast<int>(i);
+                    }
+                }
+            }
+
+            for (int j = 0; j < skin.joint_count; j++) {
+                int node = gltf_skin.joints[j];
+                int parent_node = node_parent[node];
+                while (parent_node != -1) {
+                    auto it = node_to_joint.find(parent_node);
+                    if (it != node_to_joint.end()) {
+                        skin.parent_indices[j] = it->second;
+                        break;
+                    }
+                    parent_node = node_parent[parent_node];
+                }
+            }
+
+            skins.push_back(std::move(skin));
+        }
+        return skins;
+    }
+
+    std::vector<AnimationClip> load_gltf_animations(const tinygltf::Model& model, const std::vector<Skin>& skins) {
+        std::vector<AnimationClip> clips;
+        if (skins.empty()) return clips;
+
+        const Skin& primary_skin = skins[0];
+        std::unordered_map<int, int> node_to_joint;
+        for (size_t s = 0; s < model.skins.size(); s++) {
+            for (size_t j = 0; j < model.skins[s].joints.size(); j++) {
+                node_to_joint[model.skins[s].joints[j]] = static_cast<int>(j);
+            }
+        }
+
+        for (const auto& gltf_anim : model.animations) {
+            AnimationClip clip;
+            clip.duration = 0.0f;
+            clip.joints.resize(primary_skin.joint_count);
+
+            for (const auto& channel : gltf_anim.channels) {
+                if (channel.target_node < 0) continue;
+                auto joint_it = node_to_joint.find(channel.target_node);
+                if (joint_it == node_to_joint.end()) continue;
+                int joint = joint_it->second;
+                if (joint < 0 || joint >= primary_skin.joint_count) continue;
+
+                const auto& sampler = gltf_anim.samplers[channel.sampler];
+                const tinygltf::Accessor& in_acc = model.accessors[sampler.input];
+                const tinygltf::Accessor& out_acc = model.accessors[sampler.output];
+                const tinygltf::BufferView& in_bv = model.bufferViews[in_acc.bufferView];
+                const tinygltf::BufferView& out_bv = model.bufferViews[out_acc.bufferView];
+                const tinygltf::Buffer& in_buf = model.buffers[in_bv.buffer];
+                const tinygltf::Buffer& out_buf = model.buffers[out_bv.buffer];
+
+                const float* times = reinterpret_cast<const float*>(in_buf.data.data() + in_bv.byteOffset + in_acc.byteOffset);
+                const float* values = reinterpret_cast<const float*>(out_buf.data.data() + out_bv.byteOffset + out_acc.byteOffset);
+
+                auto& track = clip.joints[joint];
+
+                if (channel.target_path == "translation") {
+                    track.timesT.assign(times, times + in_acc.count);
+                    track.translations.reserve(out_acc.count);
+                    for (size_t i = 0; i < out_acc.count; i++) {
+                        track.translations.emplace_back(values[i * 3 + 0], values[i * 3 + 1], values[i * 3 + 2]);
+                    }
+                    if (!track.timesT.empty()) clip.duration = std::max(clip.duration, track.timesT.back());
+                }
+                else if (channel.target_path == "rotation") {
+                    track.timesR.assign(times, times + in_acc.count);
+                    track.rotations.reserve(out_acc.count);
+                    for (size_t i = 0; i < out_acc.count; i++) {
+                        track.rotations.emplace_back(values[i * 4 + 3], values[i * 4 + 0], values[i * 4 + 1], values[i * 4 + 2]);
+                    }
+                    if (!track.timesR.empty()) clip.duration = std::max(clip.duration, track.timesR.back());
+                }
+                else if (channel.target_path == "scale") {
+                    track.timesS.assign(times, times + in_acc.count);
+                    track.scales.reserve(out_acc.count);
+                    for (size_t i = 0; i < out_acc.count; i++) {
+                        track.scales.emplace_back(values[i * 3 + 0], values[i * 3 + 1], values[i * 3 + 2]);
+                    }
+                    if (!track.timesS.empty()) clip.duration = std::max(clip.duration, track.timesS.back());
+                }
+            }
+            clips.push_back(std::move(clip));
+        }
+        return clips;
+    }
+
+    struct SkinnedGLTFData {
+        std::vector<std::shared_ptr<SkinnedMeshAsset>> meshes;
+        std::vector<Skin> skins;
+        std::vector<AnimationClip> animations;
+        std::vector<Material> materials;
+    };
+
+    optional<SkinnedGLTFData> load_gltf_meshes_skinned(filesystem::path path) {
+        fmt::println("loading GLTF: {}", path.string());
+
+        tinygltf::TinyGLTF loader;
+        tinygltf::Model model;
+        string err, warn;
+
+        bool ok = (path.extension() == ".glb") ? loader.LoadBinaryFromFile(&model, &err, &warn, path.string()) : loader.LoadASCIIFromFile(&model, &err, &warn, path.string());
+
+        if (!warn.empty()) fmt::println("GLTF warning: {}", warn);
+        if (!err.empty())  fmt::println("GLTF error: {}",   err);
+        if (!ok) {
+            fmt::println("failed to load GLTF: {}", path.string());
+            return {};
+        }
+
+        auto data_ptr = [&](const tinygltf::Accessor& acc) -> const uint8_t* {
+            const auto& bv  = model.bufferViews[acc.bufferView];
+            const auto& buf = model.buffers[bv.buffer];
+            return buf.data.data() + bv.byteOffset + acc.byteOffset;
+        };
+
+        auto stride_of = [&](const tinygltf::Accessor& acc) -> size_t {
+            const auto& bv = model.bufferViews[acc.bufferView];
+            if (bv.byteStride != 0) return bv.byteStride;
+            return tinygltf::GetComponentSizeInBytes(acc.componentType) * tinygltf::GetNumComponentsInType(acc.type);
+        };
+
+        SkinnedGLTFData result;
+
+        auto load_texture = [&](int tex_index, AllocatedImage fallback) -> AllocatedImage {
+            if (tex_index < 0 || tex_index >= (int)model.textures.size()) return fallback;
+            const auto& tex = model.textures[tex_index];
+            if (tex.source < 0 || tex.source >= (int)model.images.size()) return fallback;
+            const auto& img = model.images[tex.source];
+            if (img.image.empty()) return fallback;
+            VkExtent3D extent = { (uint32_t)img.width, (uint32_t)img.height, 1 };
+            return create_image((void*)img.image.data(), extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_SAMPLED_BIT);
+        };
+
+        result.materials.resize(model.materials.size());
+        for (size_t mi = 0; mi < model.materials.size(); mi++) {
+            const auto& mat = model.materials[mi];
+            float scalar_tint = 1.f;
+            float roughness = 1.f;
+            float metallic = 0.f;
+            if (mat.pbrMetallicRoughness.baseColorFactor.size() >= 3) {
+                scalar_tint = (float)mat.pbrMetallicRoughness.baseColorFactor[0];
+            }
+            if (mat.pbrMetallicRoughness.roughnessFactor >= 0.0) {
+                roughness = (float)mat.pbrMetallicRoughness.roughnessFactor;
+            }
+            if (mat.pbrMetallicRoughness.metallicFactor >= 0.0) {
+                metallic = (float)mat.pbrMetallicRoughness.metallicFactor;
+            }
+
+            AllocatedImage albedo = load_texture(mat.pbrMetallicRoughness.baseColorTexture.index, _white_image);
+            AllocatedImage normal = load_texture(mat.normalTexture.index, _normal_image);
+            AllocatedImage roughness_map = load_texture(mat.pbrMetallicRoughness.metallicRoughnessTexture.index, _white_image);
+            AllocatedImage metallic_map = load_texture(mat.pbrMetallicRoughness.metallicRoughnessTexture.index, _black_image);
+            AllocatedImage emissive = load_texture(mat.emissiveTexture.index, _black_image);
+            AllocatedImage ao = load_texture(mat.occlusionTexture.index, _white_image);
+
+            result.materials[mi] = create_material(albedo, normal, roughness_map, metallic_map, emissive, ao, scalar_tint, roughness, metallic);
+        }
+
+        vector<uint32_t> indices;
+        vector<SkinnedVertex> vertices;
+
+        for (const tinygltf::Mesh& mesh : model.meshes) {
+            SkinnedMeshAsset new_mesh;
+            new_mesh.name = mesh.name;
+            indices.clear();
+            vertices.clear();
+
+            for (const tinygltf::Primitive& prim : mesh.primitives) {
+                GeoSurface new_surface;
+                new_surface.start_index = static_cast<uint32_t>(indices.size());
+                const size_t initial_vtx = vertices.size();
+
+                {
+                    const tinygltf::Accessor& acc = model.accessors[prim.indices];
+                    new_surface.count = static_cast<uint32_t>(acc.count);
+                    indices.reserve(indices.size() + acc.count);
+                    const uint8_t* idx_data = data_ptr(acc);
+
+                    switch (acc.componentType) {
+                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+                            for (size_t i = 0; i < acc.count; i++) indices.push_back(idx_data[i] + (uint32_t)initial_vtx);
+                            break;
+                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+                            for (size_t i = 0; i < acc.count; i++) indices.push_back(reinterpret_cast<const uint16_t*>(idx_data)[i] + (uint32_t)initial_vtx);
+                            break;
+                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
+                            for (size_t i = 0; i < acc.count; i++) indices.push_back(reinterpret_cast<const uint32_t*>(idx_data)[i] + (uint32_t)initial_vtx);
+                            break;
+                        default:
+                            fmt::println("GLTF: unsupported index component type {}", acc.componentType);
+                            return {};
+                    }
+                }
+
+                {
+                    auto it = prim.attributes.find("POSITION");
+                    if (it == prim.attributes.end()) {
+                        fmt::println("GLTF: primitive missing POSITION attribute");
+                        return {};
+                    }
+                    const tinygltf::Accessor& acc = model.accessors[it->second];
+                    const size_t s = stride_of(acc);
+                    const uint8_t* ptr = data_ptr(acc);
+                    vertices.resize(initial_vtx + acc.count);
+
+                    for (size_t i = 0; i < acc.count; i++) {
+                        SkinnedVertex vtx{};
+                        vtx.position = *reinterpret_cast<const glm::vec3*>(ptr + i * s);
+                        vtx.normal = {1, 0, 0};
+                        vtx.uv = {0, 0};
+                        vtx.tangent = {1, 0, 0, 1};
+                        vtx.joints[0] = 0; vtx.joints[1] = 0; vtx.joints[2] = 0; vtx.joints[3] = 0;
+                        vtx.weights[0] = 1.f; vtx.weights[1] = 0.f; vtx.weights[2] = 0.f; vtx.weights[3] = 0.f;
+                        vertices[initial_vtx + i] = vtx;
+                    }
+                }
+
+                {
+                    auto it = prim.attributes.find("NORMAL");
+                    if (it != prim.attributes.end()) {
+                        const tinygltf::Accessor& acc = model.accessors[it->second];
+                        const size_t s = stride_of(acc);
+                        const uint8_t* ptr = data_ptr(acc);
+                        for (size_t i = 0; i < acc.count; i++) vertices[initial_vtx + i].normal = *reinterpret_cast<const glm::vec3*>(ptr + i * s);
+                    }
+                }
+
+                {
+                    auto it = prim.attributes.find("TEXCOORD_0");
+                    if (it != prim.attributes.end()) {
+                        const tinygltf::Accessor& acc = model.accessors[it->second];
+                        const size_t s = stride_of(acc);
+                        const uint8_t* ptr = data_ptr(acc);
+                        for (size_t i = 0; i < acc.count; i++) {
+                            vertices[initial_vtx + i].uv = *reinterpret_cast<const glm::vec2*>(ptr + i * s);
+                        }
+                    }
+                }
+
+                {
+                    auto it = prim.attributes.find("TANGENT");
+                    if (it != prim.attributes.end()) {
+                        const tinygltf::Accessor& acc = model.accessors[it->second];
+                        const size_t s = stride_of(acc);
+                        const uint8_t* ptr = data_ptr(acc);
+                        for (size_t i = 0; i < acc.count; i++) {
+                            vertices[initial_vtx + i].tangent = *reinterpret_cast<const glm::vec4*>(ptr + i * s);
+                        }
+                    }
+                }
+
+                {
+                    auto it = prim.attributes.find("JOINTS_0");
+                    if (it != prim.attributes.end()) {
+                        const tinygltf::Accessor& acc = model.accessors[it->second];
+                        const size_t s = stride_of(acc);
+                        const uint8_t* ptr = data_ptr(acc);
+
+                        switch (acc.componentType) {
+                            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+                                for (size_t i = 0; i < acc.count; i++) {
+                                    const uint8_t* j = ptr + i * s;
+                                    vertices[initial_vtx + i].joints[0] = j[0];
+                                    vertices[initial_vtx + i].joints[1] = j[1];
+                                    vertices[initial_vtx + i].joints[2] = j[2];
+                                    vertices[initial_vtx + i].joints[3] = j[3];
+                                }
+                                break;
+                            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+                                for (size_t i = 0; i < acc.count; i++) {
+                                    const uint16_t* j = reinterpret_cast<const uint16_t*>(ptr + i * s);
+                                    vertices[initial_vtx + i].joints[0] = j[0];
+                                    vertices[initial_vtx + i].joints[1] = j[1];
+                                    vertices[initial_vtx + i].joints[2] = j[2];
+                                    vertices[initial_vtx + i].joints[3] = j[3];
+                                }
+                                break;
+                            default:
+                                fmt::println("GLTF: unsupported JOINTS_0 component type {}", acc.componentType);
+                                return {};
+                        }
+                    }
+                }
+
+                {
+                    auto it = prim.attributes.find("WEIGHTS_0");
+                    if (it != prim.attributes.end()) {
+                        const tinygltf::Accessor& acc = model.accessors[it->second];
+                        const size_t s = stride_of(acc);
+                        const uint8_t* ptr = data_ptr(acc);
+                        for (size_t i = 0; i < acc.count; i++) {
+                            glm::vec4 w = *reinterpret_cast<const glm::vec4*>(ptr + i * s);
+                            float sum = w.x + w.y + w.z + w.w;
+                            if (sum > 0.0f) {
+                                w /= sum;
+                            }
+                            vertices[initial_vtx + i].weights[0] = w.x;
+                            vertices[initial_vtx + i].weights[1] = w.y;
+                            vertices[initial_vtx + i].weights[2] = w.z;
+                            vertices[initial_vtx + i].weights[3] = w.w;
+                        }
+                    }
+                }
+
+                new_mesh.surfaces.push_back(new_surface);
+            }
+
+            new_mesh.AABB_min = glm::vec3(FLT_MAX);
+            new_mesh.AABB_max = glm::vec3(-FLT_MAX);
+            for (const SkinnedVertex& vert : vertices) {
+                new_mesh.AABB_min = glm::min(new_mesh.AABB_min, vert.position);
+                new_mesh.AABB_max = glm::max(new_mesh.AABB_max, vert.position);
+            }
+
+            {
+                const size_t vb_size = vertices.size() * sizeof(SkinnedVertex);
+                const size_t ib_size = indices.size() * sizeof(uint32_t);
+
+                GPUMeshBuffers new_surface;
+
+                new_surface.vertex_buffer = create_buffer(vb_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
+                VkBufferDeviceAddressInfo device_address_info{.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, .buffer = new_surface.vertex_buffer.buffer};
+                new_surface.vertex_buffer_address = vkGetBufferDeviceAddress(_vk_device, &device_address_info);
+
+                new_surface.index_buffer = create_buffer(ib_size, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
+
+                AllocatedBuffer staging = create_buffer(vb_size + ib_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
+
+                void* data = staging.allocation->GetMappedData();
+
+                memcpy(data, vertices.data(), vb_size);
+                memcpy((char*)data + vb_size, indices.data(), ib_size);
+
+                immediate_submit([&](VkCommandBuffer cmd) {
+                    VkBufferCopy vertexCopy{ 0 };
+                    vertexCopy.dstOffset = 0;
+                    vertexCopy.srcOffset = 0;
+                    vertexCopy.size = vb_size;
+
+                    vkCmdCopyBuffer(cmd, staging.buffer, new_surface.vertex_buffer.buffer, 1, &vertexCopy);
+
+                    VkBufferCopy indexCopy{ 0 };
+                    indexCopy.dstOffset = 0;
+                    indexCopy.srcOffset = vb_size;
+                    indexCopy.size = ib_size;
+
+                    vkCmdCopyBuffer(cmd, staging.buffer, new_surface.index_buffer.buffer, 1, &indexCopy);
+                });
+
+                destroy_buffer(staging);
+
+                new_mesh.mesh_buffers = new_surface;
+            }
+
+            result.meshes.emplace_back(make_shared<SkinnedMeshAsset>(move(new_mesh)));
+        }
+
+        for (const auto& gltf_skin : model.skins) {
+            Skin skin;
+            skin.joint_count = static_cast<int>(gltf_skin.joints.size());
+            skin.parent_indices.assign(skin.joint_count, -1);
+            skin.inverse_bind_matrices.assign(skin.joint_count, glm::mat4(1.0f));
+
+            std::unordered_map<int, int> node_to_joint;
+            for (int j = 0; j < skin.joint_count; j++) {
+                node_to_joint[gltf_skin.joints[j]] = j;
+            }
+
+            if (gltf_skin.inverseBindMatrices >= 0) {
+                const tinygltf::Accessor& acc = model.accessors[gltf_skin.inverseBindMatrices];
+                const tinygltf::BufferView& bv = model.bufferViews[acc.bufferView];
+                const tinygltf::Buffer& buf = model.buffers[bv.buffer];
+                const float* data = reinterpret_cast<const float*>(buf.data.data() + bv.byteOffset + acc.byteOffset);
+                for (int i = 0; i < skin.joint_count; i++) {
+                    glm::mat4 m(1.0f);
+                    for (int c = 0; c < 16; c++) {
+                        m[c / 4][c % 4] = data[i * 16 + c];
+                    }
+                    skin.inverse_bind_matrices[i] = m;
+                }
+            }
+
+            std::vector<int> node_parent(model.nodes.size(), -1);
+            for (size_t i = 0; i < model.nodes.size(); i++) {
+                for (int child : model.nodes[i].children) {
+                    if (child >= 0 && child < static_cast<int>(model.nodes.size())) {
+                        node_parent[child] = static_cast<int>(i);
+                    }
+                }
+            }
+
+            for (int j = 0; j < skin.joint_count; j++) {
+                int node = gltf_skin.joints[j];
+                int parent_node = node_parent[node];
+                while (parent_node != -1) {
+                    auto it = node_to_joint.find(parent_node);
+                    if (it != node_to_joint.end()) {
+                        skin.parent_indices[j] = it->second;
+                        break;
+                    }
+                    parent_node = node_parent[parent_node];
+                }
+            }
+
+            result.skins.push_back(std::move(skin));
+        }
+
+        if (!result.skins.empty()) {
+            const Skin& primary_skin = result.skins[0];
+            std::unordered_map<int, int> node_to_joint;
+            for (size_t s = 0; s < model.skins.size(); s++) {
+                for (size_t j = 0; j < model.skins[s].joints.size(); j++) {
+                    node_to_joint[model.skins[s].joints[j]] = static_cast<int>(j);
+                }
+            }
+
+            for (const auto& gltf_anim : model.animations) {
+                AnimationClip clip;
+                clip.duration = 0.0f;
+                clip.joints.resize(primary_skin.joint_count);
+
+                for (const auto& channel : gltf_anim.channels) {
+                    if (channel.target_node < 0) continue;
+                    auto joint_it = node_to_joint.find(channel.target_node);
+                    if (joint_it == node_to_joint.end()) continue;
+                    int joint = joint_it->second;
+                    if (joint < 0 || joint >= primary_skin.joint_count) continue;
+
+                    const auto& sampler = gltf_anim.samplers[channel.sampler];
+                    const tinygltf::Accessor& in_acc = model.accessors[sampler.input];
+                    const tinygltf::Accessor& out_acc = model.accessors[sampler.output];
+                    const tinygltf::BufferView& in_bv = model.bufferViews[in_acc.bufferView];
+                    const tinygltf::BufferView& out_bv = model.bufferViews[out_acc.bufferView];
+                    const tinygltf::Buffer& in_buf = model.buffers[in_bv.buffer];
+                    const tinygltf::Buffer& out_buf = model.buffers[out_bv.buffer];
+
+                    const float* times = reinterpret_cast<const float*>(in_buf.data.data() + in_bv.byteOffset + in_acc.byteOffset);
+                    const float* values = reinterpret_cast<const float*>(out_buf.data.data() + out_bv.byteOffset + out_acc.byteOffset);
+
+                    auto& track = clip.joints[joint];
+
+                    if (channel.target_path == "translation") {
+                        track.timesT.assign(times, times + in_acc.count);
+                        track.translations.reserve(out_acc.count);
+                        for (size_t i = 0; i < out_acc.count; i++) {
+                            track.translations.emplace_back(values[i * 3 + 0], values[i * 3 + 1], values[i * 3 + 2]);
+                        }
+                        if (!track.timesT.empty()) clip.duration = std::max(clip.duration, track.timesT.back());
+                    }
+                    else if (channel.target_path == "rotation") {
+                        track.timesR.assign(times, times + in_acc.count);
+                        track.rotations.reserve(out_acc.count);
+                        for (size_t i = 0; i < out_acc.count; i++) {
+                            track.rotations.emplace_back(values[i * 4 + 3], values[i * 4 + 0], values[i * 4 + 1], values[i * 4 + 2]);
+                        }
+                        if (!track.timesR.empty()) clip.duration = std::max(clip.duration, track.timesR.back());
+                    }
+                    else if (channel.target_path == "scale") {
+                        track.timesS.assign(times, times + in_acc.count);
+                        track.scales.reserve(out_acc.count);
+                        for (size_t i = 0; i < out_acc.count; i++) {
+                            track.scales.emplace_back(values[i * 3 + 0], values[i * 3 + 1], values[i * 3 + 2]);
+                        }
+                        if (!track.timesS.empty()) clip.duration = std::max(clip.duration, track.timesS.back());
+                    }
+                }
+                result.animations.push_back(std::move(clip));
+            }
+        }
+
+        if (!result.meshes.empty() && !result.skins.empty()) {
+            for (auto& mesh : result.meshes) {
+                mesh->skin = &result.skins[0];
+            }
+        }
+
+        return result;
+    }
+
     void init() {
         // --- SDL SETUP ---
         SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO);
@@ -4618,7 +5406,8 @@ namespace gvk {
         init_commands();
         init_sync_structures();
         init_descriptors();
-        init_pipelines();
+        init_mesh_pipeline();
+        init_skinned_mesh_pipeline();
         init_default_data();
         init_skybox();
         init_imgui();
@@ -4678,6 +5467,7 @@ namespace gvk {
         transition_image(cmd, _depth_image_msaa.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
 
         render_queue.clear();
+        render_queue_skinned.clear();
 
         // blit to swapchain
         transition_image(cmd, main_post_processing_stack.out_image.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);

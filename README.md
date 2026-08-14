@@ -19,13 +19,13 @@ But don't mistake it, this is not a game engine, this is just a renderer, someth
 - Post-processing
 - Frustum culling
 - Flexible skybox system with equirectangular skybox loading
-
-## To-do:
-- Instanced rendering
 - Material system
 - Lighting with dynamic light count
 - Physically-based rendering
-- Shadowmapping
+
+## To-do:
+- Animated skinned meshes and armatures
+- A full demo
 
 ## AI disclosure
 AI is a useful tool for learning something, but I realized if I use it for anything more, it becomes something that removes the fun from programming for me. That's why I only use AI in 3 cases:

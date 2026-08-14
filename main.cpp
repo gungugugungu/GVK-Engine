@@ -64,6 +64,16 @@ int main() {
 
     vector<shared_ptr<MeshAsset>> test_meshes = gvk::load_gltf_meshes("../test_monkey.glb").value();
 
+    // skinned mesh
+    gvk::SkinnedGLTFData _gordon_freeman_returns = gvk::load_gltf_meshes_skinned("../gordon.glb").value();
+    SkinnedMeshAsset* gordon_freeman = _gordon_freeman_returns.meshes[0].get();
+    gordon_freeman->skin = &_gordon_freeman_returns.skins[0];
+    SkinnedInstance instance;
+    instance.asset = gordon_freeman;
+    instance.clip = &_gordon_freeman_returns.animations[0];
+    instance.current_time = 0.f;
+    instance.joint_matrices.resize(_gordon_freeman_returns.skins[0].joint_count);
+
     AllocatedImage monkey_texture = gvk::load_image("../custom.png").value();
     AllocatedImage water_normal = gvk::load_image("../water normal.jpg").value();
 
@@ -108,6 +118,7 @@ int main() {
     while (running) {
         Uint64 now = SDL_GetTicks();
         float dt = (float)(now - last_time) / 1000.f;
+        instance.current_time += dt;
         last_time = now;
 
         SDL_Event e;
@@ -374,6 +385,8 @@ int main() {
         for (auto& mesh : scene1.meshes) {
             gvk::draw_mesh(&mesh.mesh, mesh.material, mesh.position, mesh.scale, mesh.rot);
         }
+
+        gvk::draw_skinned_mesh(instance, _gordon_freeman_returns.materials[0], {0.f, 0.f, 0.f}, {1.f, 1.f, 1.f}, {1.f, 0.f, 0.f, 0.f});
 
         gvk::draw();
     }
