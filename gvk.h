@@ -86,1387 +86,1382 @@ std::vector<float> skybox_vertices {
      1,  1, -0.5  //7
 };
 
-VkCommandPoolCreateInfo init_command_pool_create_info(uint32_t queueFamilyIndex,
-    VkCommandPoolCreateFlags flags)
-{
-    VkCommandPoolCreateInfo info = {};
-    info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    info.pNext = nullptr;
-    info.queueFamilyIndex = queueFamilyIndex;
-    info.flags = flags;
-    return info;
-}
-
-VkFenceCreateInfo create_fence_info(VkFenceCreateFlags flags) {
-    VkFenceCreateInfo info = {};
-    info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-    info.pNext = nullptr;
-    info.flags = flags;
-    return info;
-}
-
-VkSemaphoreCreateInfo create_semaphore_info(VkSemaphoreCreateFlags flags) {
-    VkSemaphoreCreateInfo info = {};
-    info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-    info.pNext = nullptr;
-    info.flags = flags;
-    return info;
-}
-
-VkCommandBufferAllocateInfo init_command_buffer_allocate_info(
-    VkCommandPool pool, uint32_t count)
-{
-    VkCommandBufferAllocateInfo info = {};
-    info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    info.pNext = nullptr;
-
-    info.commandPool = pool;
-    info.commandBufferCount = count;
-    info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    return info;
-}
-
-VkCommandBufferBeginInfo create_command_buffer_begin_info(VkCommandBufferUsageFlags flags) {
-    VkCommandBufferBeginInfo info = {};
-    info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    info.pNext = nullptr;
-
-    info.pInheritanceInfo = nullptr;
-    info.flags = flags;
-    return info;
-}
-
-VkImageSubresourceRange image_subresource_range(VkImageAspectFlags aspect_mask) {
-    VkImageSubresourceRange sub_image = {};
-    sub_image.aspectMask = aspect_mask;
-    sub_image.baseMipLevel = 0;
-    sub_image.levelCount = VK_REMAINING_MIP_LEVELS;
-    sub_image.baseArrayLayer = 0;
-    sub_image.layerCount = VK_REMAINING_ARRAY_LAYERS;
-    return sub_image;
-}
-
-void transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout old_layout, VkImageLayout new_layout) {
-    VkImageMemoryBarrier2 image_barrier = {.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
-    image_barrier.pNext = nullptr;
-
-    image_barrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    image_barrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
-    image_barrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    image_barrier.dstAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT;
-
-    image_barrier.oldLayout = old_layout;
-    image_barrier.newLayout = new_layout;
-
-    VkImageAspectFlags aspect_mask = VK_IMAGE_ASPECT_COLOR_BIT;
-    if (old_layout == VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL || old_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL || old_layout == VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL || new_layout == VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL || new_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL || new_layout == VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL) {
-        aspect_mask = VK_IMAGE_ASPECT_DEPTH_BIT;
-    }
-    image_barrier.subresourceRange = image_subresource_range(aspect_mask);
-    image_barrier.image = image;
-
-    VkDependencyInfo dep_info = {};
-    dep_info.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
-    dep_info.pNext = nullptr;
-
-    dep_info.imageMemoryBarrierCount = 1;
-    dep_info.pImageMemoryBarriers = &image_barrier;
-
-    vkCmdPipelineBarrier2(cmd, &dep_info);
-}
-
-void transition_image_mip(VkCommandBuffer cmd, VkImage image, VkImageLayout old_layout, VkImageLayout new_layout, uint32_t mip_level) {
-    VkImageMemoryBarrier2 barrier = {.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
-    barrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    barrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
-    barrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    barrier.dstAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT;
-    barrier.oldLayout = old_layout;
-    barrier.newLayout = new_layout;
-    barrier.image = image;
-    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    barrier.subresourceRange.baseMipLevel = mip_level;
-    barrier.subresourceRange.levelCount = 1;
-    barrier.subresourceRange.baseArrayLayer = 0;
-    barrier.subresourceRange.layerCount = 1;
-
-    VkDependencyInfo dep = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
-    dep.imageMemoryBarrierCount = 1;
-    dep.pImageMemoryBarriers    = &barrier;
-    vkCmdPipelineBarrier2(cmd, &dep);
-}
-
-VkSemaphoreSubmitInfo make_semaphore_submit_info(VkPipelineStageFlags2 stage_mask, VkSemaphore semaphore)
-{
-    VkSemaphoreSubmitInfo submit_info{};
-    submit_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
-    submit_info.pNext = nullptr;
-    submit_info.semaphore = semaphore;
-    submit_info.stageMask = stage_mask;
-    submit_info.deviceIndex = 0;
-    submit_info.value = 1;
-
-    return submit_info;
-};
-
-VkCommandBufferSubmitInfo make_command_buffer_submit_info(VkCommandBuffer cmd)
-{
-    VkCommandBufferSubmitInfo info{};
-    info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
-    info.pNext = nullptr;
-    info.commandBuffer = cmd;
-    info.deviceMask = 0;
-
-    return info;
-}
-
-VkSubmitInfo2 submit_info(VkCommandBufferSubmitInfo* cmd, VkSemaphoreSubmitInfo* signal_semaphore_info, VkSemaphoreSubmitInfo* wait_semaphore_info)
-{
-    VkSubmitInfo2 info = {};
-    info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
-    info.pNext = nullptr;
-
-    info.waitSemaphoreInfoCount = wait_semaphore_info == nullptr ? 0 : 1;
-    info.pWaitSemaphoreInfos = wait_semaphore_info;
-
-    info.signalSemaphoreInfoCount = signal_semaphore_info == nullptr ? 0 : 1;
-    info.pSignalSemaphoreInfos = signal_semaphore_info;
-
-    info.commandBufferInfoCount = 1;
-    info.pCommandBufferInfos = cmd;
-
-    return info;
-}
-
-VkImageCreateInfo image_create_info(VkFormat format, VkImageUsageFlags usage_flags, VkExtent3D extent) {
-    VkImageCreateInfo info = {};
-    info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    info.pNext = nullptr;
-
-    info.imageType = VK_IMAGE_TYPE_2D;
-
-    info.format = format;
-    info.extent = extent;
-
-    info.mipLevels = 1;
-    info.arrayLayers = 1;
-
-    info.samples = VK_SAMPLE_COUNT_1_BIT; // for MSAA
-    info.tiling = VK_IMAGE_TILING_OPTIMAL;
-    info.usage = usage_flags;
-
-    return info;
-}
-
-VkImageViewCreateInfo imageview_create_info(VkFormat format, VkImage image, uint32_t mipmaps, VkImageAspectFlags aspectFlags) {
-    VkImageViewCreateInfo info = {};
-    info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    info.pNext = nullptr;
-
-    info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    info.image = image;
-    info.format = format;
-    info.subresourceRange.baseMipLevel = 0;
-    info.subresourceRange.levelCount = mipmaps == 0 ? 1 : mipmaps;
-    info.subresourceRange.baseArrayLayer = 0;
-    info.subresourceRange.layerCount = 1;
-    info.subresourceRange.aspectMask = aspectFlags;
-
-    return info;
-}
-
-VkImageViewCreateInfo cubemap_imageview_create_info(VkFormat format, VkImage image) {
-    VkImageViewCreateInfo info = {};
-    info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    info.pNext = nullptr;
-    info.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
-    info.image = image;
-    info.format = format;
-    info.subresourceRange.baseMipLevel = 0;
-    info.subresourceRange.levelCount = 1;
-    info.subresourceRange.baseArrayLayer = 0;
-    info.subresourceRange.layerCount = 6;
-    info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    return info;
-}
-
-void copy_image_to_image(VkCommandBuffer cmd, VkImage source, VkImage destination, VkExtent2D srcSize, VkExtent2D dstSize)
-{
-    VkImageBlit2 blitRegion{ .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2, .pNext = nullptr };
-
-    blitRegion.srcOffsets[1].x = srcSize.width;
-    blitRegion.srcOffsets[1].y = srcSize.height;
-    blitRegion.srcOffsets[1].z = 1;
-
-    blitRegion.dstOffsets[1].x = dstSize.width;
-    blitRegion.dstOffsets[1].y = dstSize.height;
-    blitRegion.dstOffsets[1].z = 1;
-
-    blitRegion.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    blitRegion.srcSubresource.baseArrayLayer = 0;
-    blitRegion.srcSubresource.layerCount = 1;
-    blitRegion.srcSubresource.mipLevel = 0;
-
-    blitRegion.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    blitRegion.dstSubresource.baseArrayLayer = 0;
-    blitRegion.dstSubresource.layerCount = 1;
-    blitRegion.dstSubresource.mipLevel = 0;
-
-    VkBlitImageInfo2 blitInfo{ .sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2, .pNext = nullptr };
-    blitInfo.dstImage = destination;
-    blitInfo.dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-    blitInfo.srcImage = source;
-    blitInfo.srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-    blitInfo.filter = VK_FILTER_LINEAR;
-    blitInfo.regionCount = 1;
-    blitInfo.pRegions = &blitRegion;
-
-    vkCmdBlitImage2(cmd, &blitInfo);
-}
-
-struct DeletionQueue
-{
-    deque<function<void()>> deletors;
-
-    void push_function(function<void()>&& function) {
-        deletors.push_back(function);
-    }
-
-    void flush() {
-        for (auto it = deletors.rbegin(); it != deletors.rend(); it++) {
-            (*it)();
-        }
-
-        deletors.clear();
-    }
-};
-
-struct AllocatedImage {
-    VkImage image = VK_NULL_HANDLE;
-    VkImageView image_view = VK_NULL_HANDLE;
-    VmaAllocation allocation = nullptr;
-    VkExtent3D extent = {};
-    VkFormat format = VK_FORMAT_UNDEFINED;
-    uint32_t mipmaps = 1;
-};
-
-struct DescriptorLayoutBuilder {
-    vector<VkDescriptorSetLayoutBinding> bindings;
-
-    void add_binding(uint32_t binding, VkDescriptorType type);
-    void clear();
-    VkDescriptorSetLayout build(VkDevice device, VkShaderStageFlags shaderStages, void* pNext = nullptr, VkDescriptorSetLayoutCreateFlags flags = 0);
-};
-
-void DescriptorLayoutBuilder::add_binding(uint32_t binding, VkDescriptorType type)
-{
-    VkDescriptorSetLayoutBinding newbind {};
-    newbind.binding = binding;
-    newbind.descriptorCount = 1;
-    newbind.descriptorType = type;
-
-    bindings.push_back(newbind);
-}
-
-void DescriptorLayoutBuilder::clear()
-{
-    bindings.clear();
-}
-
-VkDescriptorSetLayout DescriptorLayoutBuilder::build(VkDevice device, VkShaderStageFlags shaderStages, void* pNext, VkDescriptorSetLayoutCreateFlags flags)
-{
-    for (auto& b : bindings) {
-        b.stageFlags |= shaderStages;
-    }
-
-    VkDescriptorSetLayoutCreateInfo info = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-    info.pNext = pNext;
-
-    info.pBindings = bindings.data();
-    info.bindingCount = (uint32_t)bindings.size();
-    info.flags = flags;
-
-    VkDescriptorSetLayout set;
-    VK_CHECK(vkCreateDescriptorSetLayout(device, &info, nullptr, &set));
-
-    return set;
-}
-
-struct DescriptorAllocator {
-
-    struct PoolSizeRatio{
-        VkDescriptorType type;
-        float ratio;
-    };
-
-    VkDescriptorPool pool;
-
-    void init_pool(VkDevice device, uint32_t maxSets, span<PoolSizeRatio> poolRatios);
-    void clear_descriptors(VkDevice device);
-    void destroy_pool(VkDevice device);
-
-    VkDescriptorSet allocate(VkDevice device, VkDescriptorSetLayout layout);
-};
-
-void DescriptorAllocator::init_pool(VkDevice device, uint32_t maxSets, span<PoolSizeRatio> poolRatios)
-{
-    vector<VkDescriptorPoolSize> poolSizes;
-    for (PoolSizeRatio ratio : poolRatios) {
-        poolSizes.push_back(VkDescriptorPoolSize{
-            .type = ratio.type,
-            .descriptorCount = uint32_t(ratio.ratio * maxSets)
-        });
-    }
-
-    VkDescriptorPoolCreateInfo pool_info = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-    pool_info.flags = 0;
-    pool_info.maxSets = maxSets;
-    pool_info.poolSizeCount = (uint32_t)poolSizes.size();
-    pool_info.pPoolSizes = poolSizes.data();
-
-    vkCreateDescriptorPool(device, &pool_info, nullptr, &pool);
-}
-
-void DescriptorAllocator::clear_descriptors(VkDevice device)
-{
-    vkResetDescriptorPool(device, pool, 0);
-}
-
-void DescriptorAllocator::destroy_pool(VkDevice device)
-{
-    vkDestroyDescriptorPool(device,pool,nullptr);
-}
-
-VkDescriptorSet DescriptorAllocator::allocate(VkDevice device, VkDescriptorSetLayout layout)
-{
-    VkDescriptorSetAllocateInfo allocInfo = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
-    allocInfo.pNext = nullptr;
-    allocInfo.descriptorPool = pool;
-    allocInfo.descriptorSetCount = 1;
-    allocInfo.pSetLayouts = &layout;
-
-    VkDescriptorSet ds;
-    VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, &ds));
-
-    return ds;
-}
-
-VkRenderingAttachmentInfo attachment_info(
-    VkImageView view, VkClearValue* clear ,VkImageLayout layout /*= VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL*/)
-{
-    VkRenderingAttachmentInfo colorAttachment {};
-    colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-    colorAttachment.pNext = nullptr;
-
-    colorAttachment.imageView = view;
-    colorAttachment.imageLayout = layout;
-    colorAttachment.loadOp = clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
-    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    if (clear) {
-        colorAttachment.clearValue = *clear;
-    }
-
-    return colorAttachment;
-}
-
-bool load_shader_module(const char* file_path, VkDevice device, VkShaderModule* out_shader_module) {
-    ifstream file(file_path, ios::ate | ios::binary);
-
-    if (!file.is_open()) {
-        return false;
-    }
-
-    size_t file_size = (size_t)file.tellg();
-
-    vector<uint32_t> buffer(file_size / sizeof(uint32_t));
-
-    file.seekg(0);
-
-    file.read((char*)buffer.data(), file_size);
-
-    file.close();
-
-    VkShaderModuleCreateInfo create_info = {};
-    create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-    create_info.pNext = nullptr;
-
-    create_info.codeSize = buffer.size() * sizeof(uint32_t);
-    create_info.pCode = buffer.data();
-
-    VkShaderModule shader_module;
-    if (vkCreateShaderModule(device, &create_info, nullptr, &shader_module) != VK_SUCCESS) {
-        return false;
-    }
-    *out_shader_module = shader_module;
-    return true;
-}
-
-VkPipelineShaderStageCreateInfo pipeline_shader_stage_create_info(VkShaderStageFlagBits stage, VkShaderModule shader_module) {
-    VkPipelineShaderStageCreateInfo info = {};
-    info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    info.pNext = nullptr;
-    info.stage = stage;
-    info.module = shader_module;
-    info.pName = "main";
-    return info;
-}
-
-VkPipelineLayoutCreateInfo pipeline_layout_create_info() {
-    VkPipelineLayoutCreateInfo info = {};
-    info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    info.pNext = nullptr;
-    info.flags = 0;
-    info.setLayoutCount = 0;
-    info.pSetLayouts = nullptr;
-    info.pushConstantRangeCount = 0;
-    info.pPushConstantRanges = nullptr;
-    return info;
-}
-
-VkRenderingInfo rendering_info(VkExtent2D render_extent, VkRenderingAttachmentInfo* color_attachment, VkRenderingAttachmentInfo* depth_attachment) {
-    VkRenderingInfo info = {};
-    info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
-    info.pNext = nullptr;
-    info.renderArea = VkRect2D{VkOffset2D{0, 0}, render_extent};
-    info.layerCount = 1;
-    info.colorAttachmentCount = 1;
-    info.pColorAttachments = color_attachment;
-    info.pDepthAttachment = depth_attachment;
-    info.pStencilAttachment = nullptr;
-    return info;
-}
-
-struct PipelineBuilder {
-    vector<VkPipelineShaderStageCreateInfo> _shader_stages;
-    VkPipelineInputAssemblyStateCreateInfo _input_assembly;
-    VkPipelineRasterizationStateCreateInfo _rasterizer;
-    VkPipelineColorBlendAttachmentState _color_blend_attachment;
-    VkPipelineMultisampleStateCreateInfo _multisampling;
-    VkPipelineLayout _pipeline_layout;
-    VkPipelineDepthStencilStateCreateInfo _depth_stencil;
-    VkPipelineRenderingCreateInfo _render_info;
-    VkFormat _color_attachment_format;
-
-    PipelineBuilder() { clear(); }
-
-    void clear() {
-        _input_assembly   = {.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
-        _rasterizer       = {.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
-        _color_blend_attachment = {};
-        _multisampling    = {.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
-        _pipeline_layout  = {};
-        _depth_stencil    = {.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-        _render_info      = {.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
-        _shader_stages.clear();
-    }
-
-    VkPipeline build_pipeline(VkDevice device) {
-        VkPipelineViewportStateCreateInfo viewport_state = {};
-        viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-        viewport_state.viewportCount = 1;
-        viewport_state.scissorCount = 1;
-
-        VkPipelineColorBlendStateCreateInfo color_blending = {};
-        color_blending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-        color_blending.logicOpEnable = VK_FALSE;
-        color_blending.logicOp = VK_LOGIC_OP_COPY;
-        color_blending.attachmentCount = 1;
-        color_blending.pAttachments = &_color_blend_attachment;
-
-        VkPipelineVertexInputStateCreateInfo vertex_input_info = {.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-
-        VkGraphicsPipelineCreateInfo pipeline_info = {.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-        pipeline_info.pNext = &_render_info;
-        pipeline_info.stageCount = (uint32_t)_shader_stages.size();
-        pipeline_info.pStages = _shader_stages.data();
-        pipeline_info.pVertexInputState = &vertex_input_info;
-        pipeline_info.pInputAssemblyState = &_input_assembly;
-        pipeline_info.pViewportState = &viewport_state;
-        pipeline_info.pRasterizationState = &_rasterizer;
-        pipeline_info.pMultisampleState = &_multisampling;
-        pipeline_info.pColorBlendState = &color_blending;
-        pipeline_info.pDepthStencilState = &_depth_stencil;
-        pipeline_info.layout = _pipeline_layout;
-
-        VkDynamicState dyn_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
-        VkPipelineDynamicStateCreateInfo dynamic_info = {.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
-        dynamic_info.pDynamicStates = &dyn_states[0];
-        dynamic_info.dynamicStateCount = 2;
-        pipeline_info.pDynamicState = &dynamic_info;
-
-        VkPipeline new_pipeline;
-        if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &new_pipeline) != VK_SUCCESS) {
-            fmt::println("failed to create graphics pipeline");
-            return VK_NULL_HANDLE;
-        }
-        return new_pipeline;
-    }
-
-    void set_shaders(VkShaderModule vert, VkShaderModule frag) {
-        _shader_stages.clear();
-        _shader_stages.push_back(pipeline_shader_stage_create_info(VK_SHADER_STAGE_VERTEX_BIT, vert));
-        _shader_stages.push_back(pipeline_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT, frag));
-    }
-
-    void set_input_topology(VkPrimitiveTopology topology) {
-        _input_assembly.topology = topology;
-        _input_assembly.primitiveRestartEnable = VK_FALSE;
-    }
-
-    void set_polygon_mode(VkPolygonMode mode) {
-        _rasterizer.polygonMode = mode;
-        _rasterizer.lineWidth = 1.f;
-    }
-
-    void set_cull_mode(VkCullModeFlags cull_mode, VkFrontFace front_face) {
-        _rasterizer.cullMode = cull_mode;
-        _rasterizer.frontFace = front_face;
-    }
-
-    void set_multisampling_none() {
-        _multisampling.sampleShadingEnable = VK_FALSE;
-        _multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-        _multisampling.minSampleShading = 1.f;
-        _multisampling.pSampleMask = nullptr;
-        _multisampling.alphaToCoverageEnable = VK_FALSE;
-        _multisampling.alphaToOneEnable = VK_FALSE;
-    }
-
-    void enable_multisampling(VkSampleCountFlagBits sampleCount)
-    {
-        _multisampling.sampleShadingEnable = VK_FALSE;
-        _multisampling.rasterizationSamples = sampleCount;
-        _multisampling.minSampleShading = 1.0f;
-        _multisampling.pSampleMask = nullptr;
-        _multisampling.alphaToCoverageEnable = VK_FALSE;
-        _multisampling.alphaToOneEnable = VK_FALSE;
-    }
-
-    void disable_blending() {
-        _color_blend_attachment.colorWriteMask =
-            VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-            VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-        _color_blend_attachment.blendEnable = VK_FALSE;
-    }
-
-    void set_color_attachment_format(VkFormat format) {
-        _color_attachment_format = format;
-        _render_info.colorAttachmentCount = 1;
-        _render_info.pColorAttachmentFormats = &_color_attachment_format;
-    }
-
-    void set_depth_format(VkFormat format) {
-        _render_info.depthAttachmentFormat = format;
-    }
-
-    void disable_depthtest() {
-        _depth_stencil.depthTestEnable = VK_FALSE;
-        _depth_stencil.depthWriteEnable = VK_FALSE;
-        _depth_stencil.depthCompareOp = VK_COMPARE_OP_NEVER;
-        _depth_stencil.depthBoundsTestEnable = VK_FALSE;
-        _depth_stencil.stencilTestEnable = VK_FALSE;
-        _depth_stencil.front = {};
-        _depth_stencil.back = {};
-        _depth_stencil.minDepthBounds = 0.f;
-        _depth_stencil.maxDepthBounds = 1.f;
-    }
-
-    void enable_depthtest(bool depth_write_enable, VkCompareOp op)
-    {
-        _depth_stencil.depthTestEnable = VK_TRUE;
-        _depth_stencil.depthWriteEnable = depth_write_enable;
-        _depth_stencil.depthCompareOp = op;
-        _depth_stencil.depthBoundsTestEnable = VK_FALSE;
-        _depth_stencil.stencilTestEnable = VK_FALSE;
-        _depth_stencil.front = {};
-        _depth_stencil.back = {};
-        _depth_stencil.minDepthBounds = 0.f;
-        _depth_stencil.maxDepthBounds = 1.f;
-    }
-
-    void enable_blending_additive() {
-        _color_blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-        _color_blend_attachment.blendEnable = VK_TRUE;
-        _color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-        _color_blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
-        _color_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
-        _color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-        _color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-        _color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
-    }
-
-    void enable_blending_alphablend() {
-        _color_blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-        _color_blend_attachment.blendEnable = VK_TRUE;
-        _color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
-        _color_blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
-        _color_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
-        _color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-        _color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
-        _color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
-    }
-};
-
-VkRenderingAttachmentInfo depth_attachment_info(VkImageView view, VkImageLayout layout /*= VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL*/) {
-    VkRenderingAttachmentInfo depth_attachment {};
-    depth_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-    depth_attachment.pNext = nullptr;
-
-    depth_attachment.imageView = view;
-    depth_attachment.imageLayout = layout;
-    depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    depth_attachment.clearValue.depthStencil.depth = 0.f;
-
-    return depth_attachment;
-}
-
-VkImageResolve msaa_resolve() {
-    VkImageResolve resolve_region{};
-    resolve_region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    resolve_region.srcSubresource.mipLevel = 0;
-    resolve_region.srcSubresource.baseArrayLayer = 0;
-    resolve_region.srcSubresource.layerCount = 1;
-
-    resolve_region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    resolve_region.dstSubresource.mipLevel = 0;
-    resolve_region.dstSubresource.baseArrayLayer = 0;
-    resolve_region.dstSubresource.layerCount = 1;
-
-    resolve_region.srcOffset = {0, 0, 0};
-    resolve_region.dstOffset = {0, 0, 0};
-    return resolve_region;
-}
-
-struct AllocatedBuffer {
-    VkBuffer buffer;
-    VmaAllocation allocation;
-    VmaAllocationInfo info;
-};
-
-struct Vertex {
-    glm::vec3 position;
-    float uv_x;
-    glm::vec3 normal;
-    float uv_y;
-    glm::vec4 tangent;
-};
-
-void debug_print_vertex_data(Vertex vert) {
-    cout << "[GVK DEBUG] vertex data: " << endl;
-    cout << "                   position: " << vert.position.x << ", " << vert.position.y << ", " << vert.position.z << endl;
-    cout << "                   normal: " << vert.normal.x << ", " << vert.normal.y << ", " << vert.normal.z << endl;
-    cout << "                   uv: " << vert.uv_x << ", " << vert.uv_y << endl;
-}
-
-struct GPUMeshBuffers {
-    AllocatedBuffer index_buffer;
-    AllocatedBuffer vertex_buffer;
-    VkDeviceAddress vertex_buffer_address;
-};
-
-struct GPUDrawPushConstants {
-    glm::mat4 model_matrix;
-    glm::mat4 render_matrix;
-    VkDeviceAddress vertex_buffer;
-};
-
-struct SkyboxPushConstants {
-    glm::mat4 render_matrix;
-    VkDeviceAddress vertex_buffer;
-};
-
-struct MaterialPushConstants {
-    float scalar_tint;
-    float roughness;
-    float metallic;
-};
-
-struct GeoSurface {
-    uint32_t start_index;
-    uint32_t count;
-};
-
-struct MeshAsset {
-    string name;
-
-    vector<GeoSurface> surfaces;
-    GPUMeshBuffers mesh_buffers;
-    glm::vec3 AABB_min;
-    glm::vec3 AABB_max;
-};
-
-struct SkinnedVertex {
-    glm::vec3 position;
-    float pad0;
-    glm::vec3 normal;
-    float pad1;
-    glm::vec2 uv;
-    float pad2;
-    float pad3;
-    glm::vec4 tangent;
-    uint32_t joints[4];
-    float weights[4];
-};
-
-struct Skin {
-    std::vector<glm::mat4> inverse_bind_matrices;
-    std::vector<int> parent_indices;
-    std::vector<string> names;
-    int joint_count;
-
-    int find_joint(const string& name) {
-        for (int j = 0; j < joint_count; ++j) {
-            if (names[j] == name) return j;
-        }
-        return -1;
-    }
-};
-
-struct AnimationClip {
-    float duration;
-    struct JointTrack {
-        std::vector<float> timesT, timesR, timesS;
-        std::vector<glm::vec3> translations;
-        std::vector<glm::quat> rotations;
-        std::vector<glm::vec3> scales;
-    };
-    std::vector<JointTrack> joints;
-};
-
-struct Pose {
-    std::vector<glm::vec3> translations;
-    std::vector<glm::quat> rotations;
-    std::vector<glm::vec3> scales;
-};
-
-struct SkinnedMeshAsset {
-    string name;
-    vector<GeoSurface> surfaces;
-    GPUMeshBuffers mesh_buffers;
-    glm::vec3 AABB_min;
-    glm::vec3 AABB_max;
-    Skin* skin = nullptr;
-};
-
-struct SkinnedInstance {
-    SkinnedMeshAsset* asset = nullptr;
-    AnimationClip* clip = nullptr;
-    float current_time = 0.0f;
-    Pose local_pose;
-    std::vector<glm::mat4> global_pose;
-    std::vector<glm::mat4> joint_matrices;
-};
-
-glm::vec3 sample_vec3(const std::vector<float>& times, const std::vector<glm::vec3>& values, float t) {
-    if (times.empty() || values.empty()) return glm::vec3(0.0f);
-    if (t <= times.front()) return values.front();
-    if (t >= times.back()) return values.back();
-
-    size_t i = 0;
-    while (i + 1 < times.size() && times[i + 1] < t) ++i;
-
-    float t0 = times[i];
-    float t1 = times[i + 1];
-    float alpha = (t - t0) / (t1 - t0);
-
-    return glm::mix(values[i], values[i + 1], alpha);
-}
-
-glm::quat sample_quat(const std::vector<float>& times, const std::vector<glm::quat>& values, float t) {
-    if (times.empty() || values.empty()) return glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
-    if (t <= times.front()) return values.front();
-    if (t >= times.back()) return values.back();
-
-    size_t i = 0;
-    while (i + 1 < times.size() && times[i + 1] < t) ++i;
-
-    float t0 = times[i];
-    float t1 = times[i + 1];
-    float alpha = (t - t0) / (t1 - t0);
-
-    glm::quat q0 = values[i];
-    glm::quat q1 = values[i + 1];
-    if (glm::dot(q0, q1) < 0.0f) q1 = -q1;
-
-    return glm::normalize(glm::mix(q0, q1, alpha));
-}
-
-Pose sample_clip(AnimationClip* clip, float time, Skin* skin) {
-    int joint_count = skin->joint_count;
-    Pose pose;
-    pose.translations.resize(joint_count, glm::vec3(0.0f));
-    pose.rotations.resize(joint_count, glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
-    pose.scales.resize(joint_count, glm::vec3(1.0f));
-    if (!clip) return pose;
-
-    float t = time;
-    if (clip->duration > 0.0f) {
-        t = fmod(t, clip->duration);
-        if (t < 0.0f) t += clip->duration;
-    }
-
-    for (int j = 0; j < joint_count; ++j) {
-        if (j < static_cast<int>(clip->joints.size())) {
-            const auto& track = clip->joints[j];
-            pose.translations[j] = sample_vec3(track.timesT, track.translations, t);
-            pose.rotations[j] = sample_quat(track.timesR, track.rotations, t);
-            pose.scales[j] = sample_vec3(track.timesS, track.scales, t);
-        }
-    }
-    return pose;
-}
-
-void evaluate_pose(SkinnedInstance& instance) {
-    if (!instance.asset || !instance.asset->skin) return;
-
-    Skin* skin = instance.asset->skin;
-    int joint_count = skin->joint_count;
-
-    if (instance.joint_matrices.size() != static_cast<size_t>(joint_count)) {
-        instance.joint_matrices.resize(joint_count);
-    }
-
-    if (!instance.clip) {
-        for (int j = 0; j < joint_count; ++j) {
-            instance.joint_matrices[j] = glm::mat4(1.0f);
-        }
-        return;
-    }
-
-    AnimationClip* clip = instance.clip;
-
-    float t = instance.current_time;
-    if (clip->duration > 0.0f) {
-        t = fmod(t, clip->duration);
-        if (t < 0.0f) t += clip->duration;
-    }
-
-    std::vector<glm::mat4> local_matrices(joint_count, glm::mat4(1.0f));
-    std::vector<glm::mat4> global_matrices(joint_count, glm::mat4(1.0f));
-
-    for (int j = 0; j < joint_count; ++j) {
-        glm::vec3 translation(0.0f);
-        glm::quat rotation(1.0f, 0.0f, 0.0f, 0.0f);
-        glm::vec3 scale(1.0f);
-
-        if (j < static_cast<int>(clip->joints.size())) {
-            const auto& track = clip->joints[j];
-            translation = sample_vec3(track.timesT, track.translations, t);
-            rotation = sample_quat(track.timesR, track.rotations, t);
-            scale = sample_vec3(track.timesS, track.scales, t);
-        }
-
-        glm::mat4 T = glm::translate(glm::mat4(1.0f), translation);
-        glm::mat4 R = glm::mat4_cast(rotation);
-        glm::mat4 S = glm::scale(glm::mat4(1.0f), scale);
-        local_matrices[j] = T * R * S;
-    }
-
-    std::vector<bool> computed(joint_count, false);
-    int remaining = joint_count;
-    while (remaining > 0) {
-        bool progress = false;
-        for (int j = 0; j < joint_count; ++j) {
-            if (computed[j]) continue;
-            int parent = skin->parent_indices[j];
-            if (parent < 0 || parent >= joint_count || computed[parent]) {
-                if (parent < 0 || parent >= joint_count)
-                    global_matrices[j] = local_matrices[j];
-                else
-                    global_matrices[j] = global_matrices[parent] * local_matrices[j];
-                computed[j] = true;
-                --remaining;
-                progress = true;
-            }
-        }
-        if (!progress) break;
-    }
-
-    for (int j = 0; j < joint_count; ++j) {
-        instance.joint_matrices[j] = global_matrices[j] * skin->inverse_bind_matrices[j];
-    }
-}
-
-struct SkinnedGPUDrawPushConstants {
-    glm::mat4 model_matrix;
-    glm::mat4 render_matrix;
-    VkDeviceAddress vertex_buffer;
-    VkDeviceAddress joint_buffer;
-};
-
-std::vector<glm::mat4> compute_global_pose(Skin* skin, const Pose& pose) {
-    int joint_count = skin->joint_count;
-    std::vector<glm::mat4> local_matrices(joint_count, glm::mat4(1.0f));
-    std::vector<glm::mat4> global_matrices(joint_count, glm::mat4(1.0f));
-
-    for (int j = 0; j < joint_count; ++j) {
-        glm::mat4 T = glm::translate(glm::mat4(1.0f), pose.translations[j]);
-        glm::mat4 R = glm::mat4_cast(pose.rotations[j]);
-        glm::mat4 S = glm::scale(glm::mat4(1.0f), pose.scales[j]);
-        local_matrices[j] = T * R * S;
-    }
-
-    std::vector<bool> computed(joint_count, false);
-    int remaining = joint_count;
-    while (remaining > 0) {
-        bool progress = false;
-        for (int j = 0; j < joint_count; ++j) {
-            if (computed[j]) continue;
-            int parent = skin->parent_indices[j];
-            if (parent < 0 || parent >= joint_count || computed[parent]) {
-                if (parent < 0 || parent >= joint_count)
-                    global_matrices[j] = local_matrices[j];
-                else
-                    global_matrices[j] = global_matrices[parent] * local_matrices[j];
-                computed[j] = true;
-                --remaining;
-                progress = true;
-            }
-        }
-        if (!progress) break;
-    }
-    return global_matrices;
-}
-
-std::vector<glm::mat4> compute_skinning_matrices(Skin* skin, const std::vector<glm::mat4>& global_pose) {
-    int joint_count = skin->joint_count;
-    std::vector<glm::mat4> skinning_matrices(joint_count);
-    for (int j = 0; j < joint_count; ++j) {
-        skinning_matrices[j] = global_pose[j] * skin->inverse_bind_matrices[j];
-    }
-    return skinning_matrices;
-}
-
-void pose_set_local(Pose& pose, int joint, glm::vec3 translation, glm::quat rotation, glm::vec3 scale) {
-    if (joint < 0 || joint >= static_cast<int>(pose.translations.size())) return;
-    pose.translations[joint] = translation;
-    pose.rotations[joint] = rotation;
-    pose.scales[joint] = scale;
-}
-
-void pose_set_local(Pose& pose, Skin* skin, const string& name, glm::vec3 translation, glm::quat rotation, glm::vec3 scale) {
-    pose_set_local(pose, skin->find_joint(name), translation, rotation, scale);
-}
-
-void pose_set_global(SkinnedInstance& instance, int joint, glm::vec3 world_position, glm::quat world_rotation, glm::vec3 world_scale = glm::vec3(1.0f)) {
-    if (!instance.asset || !instance.asset->skin) return;
-    Skin* skin = instance.asset->skin;
-    if (joint < 0 || joint >= skin->joint_count) return;
-    if (joint >= static_cast<int>(instance.global_pose.size())) return;
-
-    glm::mat4 world = glm::translate(glm::mat4(1.0f), world_position) * glm::mat4_cast(world_rotation) * glm::scale(glm::mat4(1.0f), world_scale);
-    int parent = skin->parent_indices[joint];
-    glm::mat4 local = (parent < 0 || parent >= skin->joint_count) ? world : glm::inverse(instance.global_pose[parent]) * world;
-
-    instance.local_pose.translations[joint] = glm::vec3(local[3]);
-    instance.local_pose.rotations[joint] = glm::quat_cast(glm::mat3(local));
-    instance.local_pose.scales[joint] = world_scale;
-}
-
-void pose_set_global(SkinnedInstance& instance, const string& name, glm::vec3 world_position, glm::quat world_rotation, glm::vec3 world_scale = glm::vec3(1.0f)) {
-    if (!instance.asset || !instance.asset->skin) return;
-    pose_set_global(instance, instance.asset->skin->find_joint(name), world_position, world_rotation, world_scale);
-}
-
-glm::mat4 pose_get_global(SkinnedInstance& instance, int joint) {
-    if (joint < 0 || joint >= static_cast<int>(instance.global_pose.size())) return glm::mat4(1.0f);
-    return instance.global_pose[joint];
-}
-
-glm::mat4 pose_get_global(SkinnedInstance& instance, const string& name) {
-    if (!instance.asset || !instance.asset->skin) return glm::mat4(1.0f);
-    return pose_get_global(instance, instance.asset->skin->find_joint(name));
-}
-
-void update_animation(SkinnedInstance& instance, float dt) {
-    if (!instance.asset || !instance.asset->skin) return;
-    instance.current_time += dt;
-    instance.local_pose = sample_clip(instance.clip, instance.current_time, instance.asset->skin);
-}
-
-void finalize_pose(SkinnedInstance& instance) {
-    if (!instance.asset || !instance.asset->skin) return;
-    Skin* skin = instance.asset->skin;
-    instance.global_pose = compute_global_pose(skin, instance.local_pose);
-    instance.joint_matrices = compute_skinning_matrices(skin, instance.global_pose);
-}
-
-struct GPUSceneData {
-    glm::mat4 view;
-    glm::mat4 proj;
-    glm::mat4 viewproj;
-    glm::vec4 ambient_color;
-    glm::vec4 sunlight_direction;
-    glm::vec4 sunlight_color;
-};
-
-struct DescriptorAllocatorGrowable {
-public:
-    struct PoolSizeRatio {
-        VkDescriptorType type;
-        float ratio;
-    };
-
-    void init(VkDevice device, uint32_t max_sets, span<PoolSizeRatio> pool_ratios) {
-        ratios.clear();
-
-        for (auto r : pool_ratios) {
-            ratios.push_back(r);
-        }
-
-        VkDescriptorPool new_pool = create_pool(device, max_sets, pool_ratios);
-
-        sets_per_pool = max_sets*1.5f;
-
-        ready_pools.push_back(new_pool);
-    }
-
-    void clear_pools(VkDevice device) {
-        for (auto p : ready_pools) {
-            vkResetDescriptorPool(device, p, 0);
-        }
-        for (auto p : full_pools) {
-            vkResetDescriptorPool(device, p, 0);
-            ready_pools.push_back(p);
-        }
-        full_pools.clear();
-    }
-
-    void destroy_pools(VkDevice device) {
-        for (auto p : ready_pools) {
-            vkDestroyDescriptorPool(device, p, nullptr);
-        }
-        ready_pools.clear();
-        for (auto p : full_pools) {
-            vkDestroyDescriptorPool(device, p, nullptr);
-        }
-        full_pools.clear();
-    }
-
-    VkDescriptorSet allocate(VkDevice device, VkDescriptorSetLayout layout, void* pNext = nullptr) {
-        VkDescriptorPool pool_to_use = get_pool(device);
-
-        VkDescriptorSetAllocateInfo allocate_info = {};
-        allocate_info.pNext = pNext;
-        allocate_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        allocate_info.descriptorPool = pool_to_use;
-        allocate_info.descriptorSetCount = 1;
-        allocate_info.pSetLayouts = &layout;
-
-        VkDescriptorSet ds;
-        VkResult result = vkAllocateDescriptorSets(device, &allocate_info, &ds);
-
-        if (result == VK_ERROR_OUT_OF_POOL_MEMORY || result == VK_ERROR_FRAGMENTED_POOL) {
-            full_pools.push_back(pool_to_use);
-
-            pool_to_use = get_pool(device);
-            allocate_info.descriptorPool = pool_to_use;
-
-            VK_CHECK(vkAllocateDescriptorSets(device, &allocate_info, &ds));
-        }
-
-        ready_pools.push_back(pool_to_use);
-        return ds;
-    }
-
-private:
-    VkDescriptorPool get_pool(VkDevice device) {
-        VkDescriptorPool new_pool;
-        if (ready_pools.size() != 0) {
-            new_pool = ready_pools.back();
-            ready_pools.pop_back();
-        } else {
-            new_pool = create_pool(device, sets_per_pool, ratios);
-
-            sets_per_pool = sets_per_pool * 1.5;
-            if (sets_per_pool > 4096) sets_per_pool = 4096;
-
-        }
-
-        return new_pool;
-    }
-
-    VkDescriptorPool create_pool(VkDevice device, uint32_t set_count, span<PoolSizeRatio> pool_ratios) {
-        vector<VkDescriptorPoolSize> pool_sizes;
-        for (PoolSizeRatio ratio : pool_ratios) {
-            pool_sizes.push_back(VkDescriptorPoolSize{
-            .type = ratio.type,
-            .descriptorCount = static_cast<uint32_t>(ratio.ratio * set_count)
-            });
-        }
-
-        VkDescriptorPoolCreateInfo pool_info = {};
-        pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        pool_info.flags = 0;
-        pool_info.maxSets = set_count;
-        pool_info.poolSizeCount = static_cast<uint32_t>(pool_sizes.size());
-        pool_info.pPoolSizes = pool_sizes.data();
-
-        VkDescriptorPool new_pool;
-        vkCreateDescriptorPool(device, &pool_info, nullptr, &new_pool);
-        return new_pool;
-    }
-
-    vector<PoolSizeRatio> ratios;
-    vector<VkDescriptorPool> full_pools;
-    vector<VkDescriptorPool> ready_pools;
-    uint32_t sets_per_pool;
-};
-
-struct DescriptorWriter {
-    deque<VkDescriptorImageInfo> image_infos;
-    deque<VkDescriptorBufferInfo> buffer_infos;
-    vector<VkWriteDescriptorSet> writes;
-
-    void write_image(int binding, VkImageView image, VkSampler sampler, VkImageLayout layout, VkDescriptorType type) {
-        VkDescriptorImageInfo& info = image_infos.emplace_back(VkDescriptorImageInfo{
-        .sampler = sampler,
-        .imageView = image,
-        .imageLayout = layout
-        });
-
-        VkWriteDescriptorSet write = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-
-        write.dstBinding = binding;
-        write.dstSet = VK_NULL_HANDLE;
-        write.descriptorCount = 1;
-        write.descriptorType = type;
-        write.pImageInfo = &info;
-
-        writes.push_back(write);
-    }
-
-    void write_buffer(int binding, VkBuffer buffer, size_t size, size_t offset, VkDescriptorType type) {
-        VkDescriptorBufferInfo& info = buffer_infos.emplace_back(VkDescriptorBufferInfo{
-        .buffer = buffer,
-        .offset = offset,
-        .range = size
-        });
-
-        VkWriteDescriptorSet write = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
-
-        write.dstBinding = binding;
-        write.dstSet = VK_NULL_HANDLE;
-        write.descriptorCount = 1;
-        write.descriptorType = type;
-        write.pBufferInfo = &info;
-
-        writes.push_back(write);
-    }
-
-    void clear() {
-        image_infos.clear();
-        writes.clear();
-        buffer_infos.clear();
-    }
-
-    void update_set(VkDevice device, VkDescriptorSet set) {
-        for (VkWriteDescriptorSet& write : writes) {
-            write.dstSet = set;
-        }
-
-        vkUpdateDescriptorSets(device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
-    }
-};
-
-struct Material {
-    AllocatedImage albedo_map;
-    AllocatedImage normal_map;
-    AllocatedImage roughness_map;
-    AllocatedImage metallic_map;
-    AllocatedImage emissive_map;
-    AllocatedImage ao_map;
-
-    float scalar_tint;
-    float roughness;
-    float metallic;
-
-    VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
-};
-
-struct RenderQueueMesh {
-    MeshAsset* mesh;
-    Material material;
-    glm::vec3 position;
-    glm::vec3 scale;
-    glm::quat rotation;
-};
-
-struct RenderQueueSkinned {
-    SkinnedMeshAsset* mesh;
-    Material material;
-    glm::vec3 position;
-    glm::vec3 scale;
-    glm::quat rotation;
-    VkDeviceAddress joint_buffer;
-};
-
-struct Plane {
-    glm::vec3 normal;
-    float distance;
-};
-
-void calculate_AABB(glm::vec3& min, glm::vec3& max, vector<Vertex> vertices) {
-    for (Vertex vert : vertices) {
-        if (vert.position.x < min.x) min.x = vert.position.x;
-        if (vert.position.y < min.y) min.y = vert.position.y;
-        if (vert.position.z < min.z) min.z = vert.position.z;
-
-        if (vert.position.x > max.x) max.x = vert.position.x;
-        if (vert.position.y > max.y) max.y = vert.position.y;
-        if (vert.position.z > max.z) max.z = vert.position.z;
-    }
-}
-
-void calculate_world_AABB(glm::vec3& min, glm::vec3& max, const RenderQueueMesh& rqm)
-{
-    const glm::vec3& localMin = rqm.mesh->AABB_min;
-    const glm::vec3& localMax = rqm.mesh->AABB_max;
-
-    glm::mat4 model = glm::translate(glm::mat4(1.f), rqm.position) * glm::mat4_cast(rqm.rotation) * glm::scale(glm::mat4(1.f), rqm.scale);
-
-    glm::vec3 corners[8] = {
-        glm::vec3(localMin.x, localMin.y, localMin.z),
-        glm::vec3(localMax.x, localMin.y, localMin.z),
-        glm::vec3(localMin.x, localMax.y, localMin.z),
-        glm::vec3(localMax.x, localMax.y, localMin.z),
-        glm::vec3(localMin.x, localMin.y, localMax.z),
-        glm::vec3(localMax.x, localMin.y, localMax.z),
-        glm::vec3(localMin.x, localMax.y, localMax.z),
-        glm::vec3(localMax.x, localMax.y, localMax.z)
-    };
-
-    min = glm::vec3(FLT_MAX);
-    max = glm::vec3(-FLT_MAX);
-
-    for(int i = 0; i < 8; i++) {
-        glm::vec4 p = model * glm::vec4(corners[i], 1.0f);
-        p /= p.w;
-        min.x = glm::min(min.x, p.x);
-        min.y = glm::min(min.y, p.y);
-        min.z = glm::min(min.z, p.z);
-        max.x = glm::max(max.x, p.x);
-        max.y = glm::max(max.y, p.y);
-        max.z = glm::max(max.z, p.z);
-    }
-}
-
-bool is_AABB_inside_frustum(glm::vec3 min, glm::vec3 max, Plane left, Plane right, Plane bottom, Plane top, Plane near, Plane far) {
-    Plane planes[6] = {left, right, bottom, top, near, far};
-
-    for (int i = 0; i < 6; i++) {
-        const Plane& p = planes[i];
-
-        glm::vec3 positive_vertex;
-        positive_vertex.x = (p.normal.x >= 0.f) ? max.x : min.x;
-        positive_vertex.y = (p.normal.y >= 0.f) ? max.y : min.y;
-        positive_vertex.z = (p.normal.z >= 0.f) ? max.z : min.z;
-
-        float distance = p.normal.x * positive_vertex.x + p.normal.y * positive_vertex.y + p.normal.z * positive_vertex.z + p.distance;
-
-        if (distance < 0.f) return false;
-    }
-    return true;
-}
-
-void extract_frustum_planes(const glm::mat4& matrix, Plane& left, Plane& right, Plane& bottom, Plane& top, Plane& near, Plane& far) {
-    glm::vec4 row0 = glm::row(matrix, 0);
-    glm::vec4 row1 = glm::row(matrix, 1);
-    glm::vec4 row2 = glm::row(matrix, 2);
-    glm::vec4 row3 = glm::row(matrix, 3);
-
-    glm::vec4 leftPlane = row3+row0;
-    glm::vec4 rightPlane = row3-row0;
-    glm::vec4 bottomPlane = row3+row1;
-    glm::vec4 topPlane = row3-row1;
-    glm::vec4 nearPlane = row3+row2;
-    glm::vec4 farPlane = row3-row2;
-
-    auto normalize_plane = [](glm::vec4 p) -> Plane {
-        float length = glm::length(glm::vec3(p));
-        if (length > 0.00001f) {
-            p /= length;
-        }
-        return Plane{ glm::vec3(p), p.w };
-    };
-
-    left = normalize_plane(leftPlane);
-    right = normalize_plane(rightPlane);
-    bottom = normalize_plane(bottomPlane);
-    top = normalize_plane(topPlane);
-    near = normalize_plane(nearPlane);
-    far = normalize_plane(farPlane);
-}
-
-struct CubeMap {
-    AllocatedImage image;
-    VkImageView image_view;
-    VkSampler sampler;
-};
-
-struct Skybox {
-    GPUMeshBuffers mesh_buffers;
-    CubeMap cubemap;
-    VkPipeline pip;
-    VkPipelineLayout piplayout;
-    VkDescriptorSetLayout desc_layout;
-};
-
-struct GPUDirectionalLight {
-    glm::vec3 direction;
-    float _pad0;
-
-    glm::vec3 color;
-    float intensity;
-
-    glm::vec3 camera_pos;
-    float _pad1;
-
-    glm::vec3 ambient_color;
-    float ambient_intensity;
-}; // 64 bytes std140
-
-struct GPUPointLight {
-    glm::vec3 position;
-    float _pad0;
-    glm::vec3 color;
-    float range;
-    float intensity;
-    float _pad1;
-    float _pad2;
-    float _pad3;
-}; // 48 bytes std430
-
-struct GPUSpotLight {
-    glm::vec3 position;
-    float _pad0;
-    glm::vec3 direction;
-    float _pad1;
-    glm::vec3 color;
-    float range;
-    float intensity;
-    float _pad2;
-    float _pad3;
-    float _pad4;
-}; // 64 bytes std430
-
-struct GPULightCounts {
-    uint32_t point_light_count;
-    uint32_t spot_light_count;
-    uint32_t _pad0;
-    uint32_t _pad1;
-}; // 16 bytes std140
-
-namespace gvk {
-    void init();
-    void quit();
-}
-
 #ifdef GVK_IMPLEMENTATION
 #define GVK_IMPLEMENTATION_INCLUDED
 
 namespace gvk {
+    VkCommandPoolCreateInfo init_command_pool_create_info(uint32_t queueFamilyIndex,
+    VkCommandPoolCreateFlags flags)
+    {
+        VkCommandPoolCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        info.pNext = nullptr;
+        info.queueFamilyIndex = queueFamilyIndex;
+        info.flags = flags;
+        return info;
+    }
+
+    VkFenceCreateInfo create_fence_info(VkFenceCreateFlags flags) {
+        VkFenceCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        info.pNext = nullptr;
+        info.flags = flags;
+        return info;
+    }
+
+    VkSemaphoreCreateInfo create_semaphore_info(VkSemaphoreCreateFlags flags) {
+        VkSemaphoreCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+        info.pNext = nullptr;
+        info.flags = flags;
+        return info;
+    }
+
+    VkCommandBufferAllocateInfo init_command_buffer_allocate_info(
+        VkCommandPool pool, uint32_t count)
+    {
+        VkCommandBufferAllocateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        info.pNext = nullptr;
+
+        info.commandPool = pool;
+        info.commandBufferCount = count;
+        info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        return info;
+    }
+
+    VkCommandBufferBeginInfo create_command_buffer_begin_info(VkCommandBufferUsageFlags flags) {
+        VkCommandBufferBeginInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        info.pNext = nullptr;
+
+        info.pInheritanceInfo = nullptr;
+        info.flags = flags;
+        return info;
+    }
+
+    VkImageSubresourceRange image_subresource_range(VkImageAspectFlags aspect_mask) {
+        VkImageSubresourceRange sub_image = {};
+        sub_image.aspectMask = aspect_mask;
+        sub_image.baseMipLevel = 0;
+        sub_image.levelCount = VK_REMAINING_MIP_LEVELS;
+        sub_image.baseArrayLayer = 0;
+        sub_image.layerCount = VK_REMAINING_ARRAY_LAYERS;
+        return sub_image;
+    }
+
+    void transition_image(VkCommandBuffer cmd, VkImage image, VkImageLayout old_layout, VkImageLayout new_layout) {
+        VkImageMemoryBarrier2 image_barrier = {.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+        image_barrier.pNext = nullptr;
+
+        image_barrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        image_barrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+        image_barrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        image_barrier.dstAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT;
+
+        image_barrier.oldLayout = old_layout;
+        image_barrier.newLayout = new_layout;
+
+        VkImageAspectFlags aspect_mask = VK_IMAGE_ASPECT_COLOR_BIT;
+        if (old_layout == VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL || old_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL || old_layout == VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL || new_layout == VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL || new_layout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL || new_layout == VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL) {
+            aspect_mask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        }
+        image_barrier.subresourceRange = image_subresource_range(aspect_mask);
+        image_barrier.image = image;
+
+        VkDependencyInfo dep_info = {};
+        dep_info.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        dep_info.pNext = nullptr;
+
+        dep_info.imageMemoryBarrierCount = 1;
+        dep_info.pImageMemoryBarriers = &image_barrier;
+
+        vkCmdPipelineBarrier2(cmd, &dep_info);
+    }
+
+    void transition_image_mip(VkCommandBuffer cmd, VkImage image, VkImageLayout old_layout, VkImageLayout new_layout, uint32_t mip_level) {
+        VkImageMemoryBarrier2 barrier = {.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2};
+        barrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        barrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
+        barrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        barrier.dstAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT;
+        barrier.oldLayout = old_layout;
+        barrier.newLayout = new_layout;
+        barrier.image = image;
+        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        barrier.subresourceRange.baseMipLevel = mip_level;
+        barrier.subresourceRange.levelCount = 1;
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.layerCount = 1;
+
+        VkDependencyInfo dep = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO};
+        dep.imageMemoryBarrierCount = 1;
+        dep.pImageMemoryBarriers    = &barrier;
+        vkCmdPipelineBarrier2(cmd, &dep);
+    }
+
+    VkSemaphoreSubmitInfo make_semaphore_submit_info(VkPipelineStageFlags2 stage_mask, VkSemaphore semaphore)
+    {
+        VkSemaphoreSubmitInfo submit_info{};
+        submit_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+        submit_info.pNext = nullptr;
+        submit_info.semaphore = semaphore;
+        submit_info.stageMask = stage_mask;
+        submit_info.deviceIndex = 0;
+        submit_info.value = 1;
+
+        return submit_info;
+    };
+
+    VkCommandBufferSubmitInfo make_command_buffer_submit_info(VkCommandBuffer cmd)
+    {
+        VkCommandBufferSubmitInfo info{};
+        info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+        info.pNext = nullptr;
+        info.commandBuffer = cmd;
+        info.deviceMask = 0;
+
+        return info;
+    }
+
+    VkSubmitInfo2 submit_info(VkCommandBufferSubmitInfo* cmd, VkSemaphoreSubmitInfo* signal_semaphore_info, VkSemaphoreSubmitInfo* wait_semaphore_info)
+    {
+        VkSubmitInfo2 info = {};
+        info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+        info.pNext = nullptr;
+
+        info.waitSemaphoreInfoCount = wait_semaphore_info == nullptr ? 0 : 1;
+        info.pWaitSemaphoreInfos = wait_semaphore_info;
+
+        info.signalSemaphoreInfoCount = signal_semaphore_info == nullptr ? 0 : 1;
+        info.pSignalSemaphoreInfos = signal_semaphore_info;
+
+        info.commandBufferInfoCount = 1;
+        info.pCommandBufferInfos = cmd;
+
+        return info;
+    }
+
+    VkImageCreateInfo image_create_info(VkFormat format, VkImageUsageFlags usage_flags, VkExtent3D extent) {
+        VkImageCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+        info.pNext = nullptr;
+
+        info.imageType = VK_IMAGE_TYPE_2D;
+
+        info.format = format;
+        info.extent = extent;
+
+        info.mipLevels = 1;
+        info.arrayLayers = 1;
+
+        info.samples = VK_SAMPLE_COUNT_1_BIT; // for MSAA
+        info.tiling = VK_IMAGE_TILING_OPTIMAL;
+        info.usage = usage_flags;
+
+        return info;
+    }
+
+    VkImageViewCreateInfo imageview_create_info(VkFormat format, VkImage image, uint32_t mipmaps, VkImageAspectFlags aspectFlags) {
+        VkImageViewCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        info.pNext = nullptr;
+
+        info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        info.image = image;
+        info.format = format;
+        info.subresourceRange.baseMipLevel = 0;
+        info.subresourceRange.levelCount = mipmaps == 0 ? 1 : mipmaps;
+        info.subresourceRange.baseArrayLayer = 0;
+        info.subresourceRange.layerCount = 1;
+        info.subresourceRange.aspectMask = aspectFlags;
+
+        return info;
+    }
+
+    VkImageViewCreateInfo cubemap_imageview_create_info(VkFormat format, VkImage image) {
+        VkImageViewCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        info.pNext = nullptr;
+        info.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
+        info.image = image;
+        info.format = format;
+        info.subresourceRange.baseMipLevel = 0;
+        info.subresourceRange.levelCount = 1;
+        info.subresourceRange.baseArrayLayer = 0;
+        info.subresourceRange.layerCount = 6;
+        info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        return info;
+    }
+
+    void copy_image_to_image(VkCommandBuffer cmd, VkImage source, VkImage destination, VkExtent2D srcSize, VkExtent2D dstSize)
+    {
+        VkImageBlit2 blitRegion{ .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2, .pNext = nullptr };
+
+        blitRegion.srcOffsets[1].x = srcSize.width;
+        blitRegion.srcOffsets[1].y = srcSize.height;
+        blitRegion.srcOffsets[1].z = 1;
+
+        blitRegion.dstOffsets[1].x = dstSize.width;
+        blitRegion.dstOffsets[1].y = dstSize.height;
+        blitRegion.dstOffsets[1].z = 1;
+
+        blitRegion.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        blitRegion.srcSubresource.baseArrayLayer = 0;
+        blitRegion.srcSubresource.layerCount = 1;
+        blitRegion.srcSubresource.mipLevel = 0;
+
+        blitRegion.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        blitRegion.dstSubresource.baseArrayLayer = 0;
+        blitRegion.dstSubresource.layerCount = 1;
+        blitRegion.dstSubresource.mipLevel = 0;
+
+        VkBlitImageInfo2 blitInfo{ .sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2, .pNext = nullptr };
+        blitInfo.dstImage = destination;
+        blitInfo.dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        blitInfo.srcImage = source;
+        blitInfo.srcImageLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        blitInfo.filter = VK_FILTER_LINEAR;
+        blitInfo.regionCount = 1;
+        blitInfo.pRegions = &blitRegion;
+
+        vkCmdBlitImage2(cmd, &blitInfo);
+    }
+
+    struct DeletionQueue
+    {
+        deque<function<void()>> deletors;
+
+        void push_function(function<void()>&& function) {
+            deletors.push_back(function);
+        }
+
+        void flush() {
+            for (auto it = deletors.rbegin(); it != deletors.rend(); it++) {
+                (*it)();
+            }
+
+            deletors.clear();
+        }
+    };
+
+    struct AllocatedImage {
+        VkImage image = VK_NULL_HANDLE;
+        VkImageView image_view = VK_NULL_HANDLE;
+        VmaAllocation allocation = nullptr;
+        VkExtent3D extent = {};
+        VkFormat format = VK_FORMAT_UNDEFINED;
+        uint32_t mipmaps = 1;
+    };
+
+    struct DescriptorLayoutBuilder {
+        vector<VkDescriptorSetLayoutBinding> bindings;
+
+        void add_binding(uint32_t binding, VkDescriptorType type);
+        void clear();
+        VkDescriptorSetLayout build(VkDevice device, VkShaderStageFlags shaderStages, void* pNext = nullptr, VkDescriptorSetLayoutCreateFlags flags = 0);
+    };
+
+    void DescriptorLayoutBuilder::add_binding(uint32_t binding, VkDescriptorType type)
+    {
+        VkDescriptorSetLayoutBinding newbind {};
+        newbind.binding = binding;
+        newbind.descriptorCount = 1;
+        newbind.descriptorType = type;
+
+        bindings.push_back(newbind);
+    }
+
+    void DescriptorLayoutBuilder::clear()
+    {
+        bindings.clear();
+    }
+
+    VkDescriptorSetLayout DescriptorLayoutBuilder::build(VkDevice device, VkShaderStageFlags shaderStages, void* pNext, VkDescriptorSetLayoutCreateFlags flags)
+    {
+        for (auto& b : bindings) {
+            b.stageFlags |= shaderStages;
+        }
+
+        VkDescriptorSetLayoutCreateInfo info = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+        info.pNext = pNext;
+
+        info.pBindings = bindings.data();
+        info.bindingCount = (uint32_t)bindings.size();
+        info.flags = flags;
+
+        VkDescriptorSetLayout set;
+        VK_CHECK(vkCreateDescriptorSetLayout(device, &info, nullptr, &set));
+
+        return set;
+    }
+
+    struct DescriptorAllocator {
+
+        struct PoolSizeRatio{
+            VkDescriptorType type;
+            float ratio;
+        };
+
+        VkDescriptorPool pool;
+
+        void init_pool(VkDevice device, uint32_t maxSets, span<PoolSizeRatio> poolRatios);
+        void clear_descriptors(VkDevice device);
+        void destroy_pool(VkDevice device);
+
+        VkDescriptorSet allocate(VkDevice device, VkDescriptorSetLayout layout);
+    };
+
+    void DescriptorAllocator::init_pool(VkDevice device, uint32_t maxSets, span<PoolSizeRatio> poolRatios)
+    {
+        vector<VkDescriptorPoolSize> poolSizes;
+        for (PoolSizeRatio ratio : poolRatios) {
+            poolSizes.push_back(VkDescriptorPoolSize{
+                .type = ratio.type,
+                .descriptorCount = uint32_t(ratio.ratio * maxSets)
+            });
+        }
+
+        VkDescriptorPoolCreateInfo pool_info = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+        pool_info.flags = 0;
+        pool_info.maxSets = maxSets;
+        pool_info.poolSizeCount = (uint32_t)poolSizes.size();
+        pool_info.pPoolSizes = poolSizes.data();
+
+        vkCreateDescriptorPool(device, &pool_info, nullptr, &pool);
+    }
+
+    void DescriptorAllocator::clear_descriptors(VkDevice device)
+    {
+        vkResetDescriptorPool(device, pool, 0);
+    }
+
+    void DescriptorAllocator::destroy_pool(VkDevice device)
+    {
+        vkDestroyDescriptorPool(device,pool,nullptr);
+    }
+
+    VkDescriptorSet DescriptorAllocator::allocate(VkDevice device, VkDescriptorSetLayout layout)
+    {
+        VkDescriptorSetAllocateInfo allocInfo = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+        allocInfo.pNext = nullptr;
+        allocInfo.descriptorPool = pool;
+        allocInfo.descriptorSetCount = 1;
+        allocInfo.pSetLayouts = &layout;
+
+        VkDescriptorSet ds;
+        VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, &ds));
+
+        return ds;
+    }
+
+    VkRenderingAttachmentInfo attachment_info(
+        VkImageView view, VkClearValue* clear ,VkImageLayout layout /*= VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL*/)
+    {
+        VkRenderingAttachmentInfo colorAttachment {};
+        colorAttachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        colorAttachment.pNext = nullptr;
+
+        colorAttachment.imageView = view;
+        colorAttachment.imageLayout = layout;
+        colorAttachment.loadOp = clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+        colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        if (clear) {
+            colorAttachment.clearValue = *clear;
+        }
+
+        return colorAttachment;
+    }
+
+    bool load_shader_module(const char* file_path, VkDevice device, VkShaderModule* out_shader_module) {
+        ifstream file(file_path, ios::ate | ios::binary);
+
+        if (!file.is_open()) {
+            return false;
+        }
+
+        size_t file_size = (size_t)file.tellg();
+
+        vector<uint32_t> buffer(file_size / sizeof(uint32_t));
+
+        file.seekg(0);
+
+        file.read((char*)buffer.data(), file_size);
+
+        file.close();
+
+        VkShaderModuleCreateInfo create_info = {};
+        create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+        create_info.pNext = nullptr;
+
+        create_info.codeSize = buffer.size() * sizeof(uint32_t);
+        create_info.pCode = buffer.data();
+
+        VkShaderModule shader_module;
+        if (vkCreateShaderModule(device, &create_info, nullptr, &shader_module) != VK_SUCCESS) {
+            return false;
+        }
+        *out_shader_module = shader_module;
+        return true;
+    }
+
+    VkPipelineShaderStageCreateInfo pipeline_shader_stage_create_info(VkShaderStageFlagBits stage, VkShaderModule shader_module) {
+        VkPipelineShaderStageCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        info.pNext = nullptr;
+        info.stage = stage;
+        info.module = shader_module;
+        info.pName = "main";
+        return info;
+    }
+
+    VkPipelineLayoutCreateInfo pipeline_layout_create_info() {
+        VkPipelineLayoutCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        info.pNext = nullptr;
+        info.flags = 0;
+        info.setLayoutCount = 0;
+        info.pSetLayouts = nullptr;
+        info.pushConstantRangeCount = 0;
+        info.pPushConstantRanges = nullptr;
+        return info;
+    }
+
+    VkRenderingInfo rendering_info(VkExtent2D render_extent, VkRenderingAttachmentInfo* color_attachment, VkRenderingAttachmentInfo* depth_attachment) {
+        VkRenderingInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+        info.pNext = nullptr;
+        info.renderArea = VkRect2D{VkOffset2D{0, 0}, render_extent};
+        info.layerCount = 1;
+        info.colorAttachmentCount = 1;
+        info.pColorAttachments = color_attachment;
+        info.pDepthAttachment = depth_attachment;
+        info.pStencilAttachment = nullptr;
+        return info;
+    }
+
+    struct PipelineBuilder {
+        vector<VkPipelineShaderStageCreateInfo> _shader_stages;
+        VkPipelineInputAssemblyStateCreateInfo _input_assembly;
+        VkPipelineRasterizationStateCreateInfo _rasterizer;
+        VkPipelineColorBlendAttachmentState _color_blend_attachment;
+        VkPipelineMultisampleStateCreateInfo _multisampling;
+        VkPipelineLayout _pipeline_layout;
+        VkPipelineDepthStencilStateCreateInfo _depth_stencil;
+        VkPipelineRenderingCreateInfo _render_info;
+        VkFormat _color_attachment_format;
+
+        PipelineBuilder() { clear(); }
+
+        void clear() {
+            _input_assembly   = {.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+            _rasterizer       = {.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+            _color_blend_attachment = {};
+            _multisampling    = {.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+            _pipeline_layout  = {};
+            _depth_stencil    = {.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+            _render_info      = {.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+            _shader_stages.clear();
+        }
+
+        VkPipeline build_pipeline(VkDevice device) {
+            VkPipelineViewportStateCreateInfo viewport_state = {};
+            viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+            viewport_state.viewportCount = 1;
+            viewport_state.scissorCount = 1;
+
+            VkPipelineColorBlendStateCreateInfo color_blending = {};
+            color_blending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+            color_blending.logicOpEnable = VK_FALSE;
+            color_blending.logicOp = VK_LOGIC_OP_COPY;
+            color_blending.attachmentCount = 1;
+            color_blending.pAttachments = &_color_blend_attachment;
+
+            VkPipelineVertexInputStateCreateInfo vertex_input_info = {.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+
+            VkGraphicsPipelineCreateInfo pipeline_info = {.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+            pipeline_info.pNext = &_render_info;
+            pipeline_info.stageCount = (uint32_t)_shader_stages.size();
+            pipeline_info.pStages = _shader_stages.data();
+            pipeline_info.pVertexInputState = &vertex_input_info;
+            pipeline_info.pInputAssemblyState = &_input_assembly;
+            pipeline_info.pViewportState = &viewport_state;
+            pipeline_info.pRasterizationState = &_rasterizer;
+            pipeline_info.pMultisampleState = &_multisampling;
+            pipeline_info.pColorBlendState = &color_blending;
+            pipeline_info.pDepthStencilState = &_depth_stencil;
+            pipeline_info.layout = _pipeline_layout;
+
+            VkDynamicState dyn_states[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+            VkPipelineDynamicStateCreateInfo dynamic_info = {.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+            dynamic_info.pDynamicStates = &dyn_states[0];
+            dynamic_info.dynamicStateCount = 2;
+            pipeline_info.pDynamicState = &dynamic_info;
+
+            VkPipeline new_pipeline;
+            if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &new_pipeline) != VK_SUCCESS) {
+                fmt::println("failed to create graphics pipeline");
+                return VK_NULL_HANDLE;
+            }
+            return new_pipeline;
+        }
+
+        void set_shaders(VkShaderModule vert, VkShaderModule frag) {
+            _shader_stages.clear();
+            _shader_stages.push_back(pipeline_shader_stage_create_info(VK_SHADER_STAGE_VERTEX_BIT, vert));
+            _shader_stages.push_back(pipeline_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT, frag));
+        }
+
+        void set_input_topology(VkPrimitiveTopology topology) {
+            _input_assembly.topology = topology;
+            _input_assembly.primitiveRestartEnable = VK_FALSE;
+        }
+
+        void set_polygon_mode(VkPolygonMode mode) {
+            _rasterizer.polygonMode = mode;
+            _rasterizer.lineWidth = 1.f;
+        }
+
+        void set_cull_mode(VkCullModeFlags cull_mode, VkFrontFace front_face) {
+            _rasterizer.cullMode = cull_mode;
+            _rasterizer.frontFace = front_face;
+        }
+
+        void set_multisampling_none() {
+            _multisampling.sampleShadingEnable = VK_FALSE;
+            _multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+            _multisampling.minSampleShading = 1.f;
+            _multisampling.pSampleMask = nullptr;
+            _multisampling.alphaToCoverageEnable = VK_FALSE;
+            _multisampling.alphaToOneEnable = VK_FALSE;
+        }
+
+        void enable_multisampling(VkSampleCountFlagBits sampleCount)
+        {
+            _multisampling.sampleShadingEnable = VK_FALSE;
+            _multisampling.rasterizationSamples = sampleCount;
+            _multisampling.minSampleShading = 1.0f;
+            _multisampling.pSampleMask = nullptr;
+            _multisampling.alphaToCoverageEnable = VK_FALSE;
+            _multisampling.alphaToOneEnable = VK_FALSE;
+        }
+
+        void disable_blending() {
+            _color_blend_attachment.colorWriteMask =
+                VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+            _color_blend_attachment.blendEnable = VK_FALSE;
+        }
+
+        void set_color_attachment_format(VkFormat format) {
+            _color_attachment_format = format;
+            _render_info.colorAttachmentCount = 1;
+            _render_info.pColorAttachmentFormats = &_color_attachment_format;
+        }
+
+        void set_depth_format(VkFormat format) {
+            _render_info.depthAttachmentFormat = format;
+        }
+
+        void disable_depthtest() {
+            _depth_stencil.depthTestEnable = VK_FALSE;
+            _depth_stencil.depthWriteEnable = VK_FALSE;
+            _depth_stencil.depthCompareOp = VK_COMPARE_OP_NEVER;
+            _depth_stencil.depthBoundsTestEnable = VK_FALSE;
+            _depth_stencil.stencilTestEnable = VK_FALSE;
+            _depth_stencil.front = {};
+            _depth_stencil.back = {};
+            _depth_stencil.minDepthBounds = 0.f;
+            _depth_stencil.maxDepthBounds = 1.f;
+        }
+
+        void enable_depthtest(bool depth_write_enable, VkCompareOp op)
+        {
+            _depth_stencil.depthTestEnable = VK_TRUE;
+            _depth_stencil.depthWriteEnable = depth_write_enable;
+            _depth_stencil.depthCompareOp = op;
+            _depth_stencil.depthBoundsTestEnable = VK_FALSE;
+            _depth_stencil.stencilTestEnable = VK_FALSE;
+            _depth_stencil.front = {};
+            _depth_stencil.back = {};
+            _depth_stencil.minDepthBounds = 0.f;
+            _depth_stencil.maxDepthBounds = 1.f;
+        }
+
+        void enable_blending_additive() {
+            _color_blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+            _color_blend_attachment.blendEnable = VK_TRUE;
+            _color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+            _color_blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+            _color_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
+            _color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            _color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+            _color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+        }
+
+        void enable_blending_alphablend() {
+            _color_blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+            _color_blend_attachment.blendEnable = VK_TRUE;
+            _color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+            _color_blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            _color_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
+            _color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+            _color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+            _color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+        }
+    };
+
+    VkRenderingAttachmentInfo depth_attachment_info(VkImageView view, VkImageLayout layout /*= VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL*/) {
+        VkRenderingAttachmentInfo depth_attachment {};
+        depth_attachment.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        depth_attachment.pNext = nullptr;
+
+        depth_attachment.imageView = view;
+        depth_attachment.imageLayout = layout;
+        depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        depth_attachment.clearValue.depthStencil.depth = 0.f;
+
+        return depth_attachment;
+    }
+
+    VkImageResolve msaa_resolve() {
+        VkImageResolve resolve_region{};
+        resolve_region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        resolve_region.srcSubresource.mipLevel = 0;
+        resolve_region.srcSubresource.baseArrayLayer = 0;
+        resolve_region.srcSubresource.layerCount = 1;
+
+        resolve_region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        resolve_region.dstSubresource.mipLevel = 0;
+        resolve_region.dstSubresource.baseArrayLayer = 0;
+        resolve_region.dstSubresource.layerCount = 1;
+
+        resolve_region.srcOffset = {0, 0, 0};
+        resolve_region.dstOffset = {0, 0, 0};
+        return resolve_region;
+    }
+
+    struct AllocatedBuffer {
+        VkBuffer buffer;
+        VmaAllocation allocation;
+        VmaAllocationInfo info;
+    };
+
+    struct Vertex {
+        glm::vec3 position;
+        float uv_x;
+        glm::vec3 normal;
+        float uv_y;
+        glm::vec4 tangent;
+    };
+
+    void debug_print_vertex_data(Vertex vert) {
+        cout << "[GVK DEBUG] vertex data: " << endl;
+        cout << "                   position: " << vert.position.x << ", " << vert.position.y << ", " << vert.position.z << endl;
+        cout << "                   normal: " << vert.normal.x << ", " << vert.normal.y << ", " << vert.normal.z << endl;
+        cout << "                   uv: " << vert.uv_x << ", " << vert.uv_y << endl;
+    }
+
+    struct GPUMeshBuffers {
+        AllocatedBuffer index_buffer;
+        AllocatedBuffer vertex_buffer;
+        VkDeviceAddress vertex_buffer_address;
+    };
+
+    struct GPUDrawPushConstants {
+        glm::mat4 model_matrix;
+        glm::mat4 render_matrix;
+        VkDeviceAddress vertex_buffer;
+    };
+
+    struct SkyboxPushConstants {
+        glm::mat4 render_matrix;
+        VkDeviceAddress vertex_buffer;
+    };
+
+    struct MaterialPushConstants {
+        float scalar_tint;
+        float roughness;
+        float metallic;
+    };
+
+    struct GeoSurface {
+        uint32_t start_index;
+        uint32_t count;
+    };
+
+    struct MeshAsset {
+        string name;
+
+        vector<GeoSurface> surfaces;
+        GPUMeshBuffers mesh_buffers;
+        glm::vec3 AABB_min;
+        glm::vec3 AABB_max;
+    };
+
+    struct SkinnedVertex {
+        glm::vec3 position;
+        float pad0;
+        glm::vec3 normal;
+        float pad1;
+        glm::vec2 uv;
+        float pad2;
+        float pad3;
+        glm::vec4 tangent;
+        uint32_t joints[4];
+        float weights[4];
+    };
+
+    struct Skin {
+        std::vector<glm::mat4> inverse_bind_matrices;
+        std::vector<int> parent_indices;
+        std::vector<string> names;
+        int joint_count;
+
+        int find_joint(const string& name) {
+            for (int j = 0; j < joint_count; ++j) {
+                if (names[j] == name) return j;
+            }
+            return -1;
+        }
+    };
+
+    struct AnimationClip {
+        float duration;
+        struct JointTrack {
+            std::vector<float> timesT, timesR, timesS;
+            std::vector<glm::vec3> translations;
+            std::vector<glm::quat> rotations;
+            std::vector<glm::vec3> scales;
+        };
+        std::vector<JointTrack> joints;
+    };
+
+    struct Pose {
+        std::vector<glm::vec3> translations;
+        std::vector<glm::quat> rotations;
+        std::vector<glm::vec3> scales;
+    };
+
+    struct SkinnedMeshAsset {
+        string name;
+        vector<GeoSurface> surfaces;
+        GPUMeshBuffers mesh_buffers;
+        glm::vec3 AABB_min;
+        glm::vec3 AABB_max;
+        Skin* skin = nullptr;
+    };
+
+    struct SkinnedInstance {
+        SkinnedMeshAsset* asset = nullptr;
+        AnimationClip* clip = nullptr;
+        float current_time = 0.0f;
+        Pose local_pose;
+        std::vector<glm::mat4> global_pose;
+        std::vector<glm::mat4> joint_matrices;
+    };
+
+    glm::vec3 sample_vec3(const std::vector<float>& times, const std::vector<glm::vec3>& values, float t) {
+        if (times.empty() || values.empty()) return glm::vec3(0.0f);
+        if (t <= times.front()) return values.front();
+        if (t >= times.back()) return values.back();
+
+        size_t i = 0;
+        while (i + 1 < times.size() && times[i + 1] < t) ++i;
+
+        float t0 = times[i];
+        float t1 = times[i + 1];
+        float alpha = (t - t0) / (t1 - t0);
+
+        return glm::mix(values[i], values[i + 1], alpha);
+    }
+
+    glm::quat sample_quat(const std::vector<float>& times, const std::vector<glm::quat>& values, float t) {
+        if (times.empty() || values.empty()) return glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+        if (t <= times.front()) return values.front();
+        if (t >= times.back()) return values.back();
+
+        size_t i = 0;
+        while (i + 1 < times.size() && times[i + 1] < t) ++i;
+
+        float t0 = times[i];
+        float t1 = times[i + 1];
+        float alpha = (t - t0) / (t1 - t0);
+
+        glm::quat q0 = values[i];
+        glm::quat q1 = values[i + 1];
+        if (glm::dot(q0, q1) < 0.0f) q1 = -q1;
+
+        return glm::normalize(glm::mix(q0, q1, alpha));
+    }
+
+    Pose sample_clip(AnimationClip* clip, float time, Skin* skin) {
+        int joint_count = skin->joint_count;
+        Pose pose;
+        pose.translations.resize(joint_count, glm::vec3(0.0f));
+        pose.rotations.resize(joint_count, glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
+        pose.scales.resize(joint_count, glm::vec3(1.0f));
+        if (!clip) return pose;
+
+        float t = time;
+        if (clip->duration > 0.0f) {
+            t = fmod(t, clip->duration);
+            if (t < 0.0f) t += clip->duration;
+        }
+
+        for (int j = 0; j < joint_count; ++j) {
+            if (j < static_cast<int>(clip->joints.size())) {
+                const auto& track = clip->joints[j];
+                pose.translations[j] = sample_vec3(track.timesT, track.translations, t);
+                pose.rotations[j] = sample_quat(track.timesR, track.rotations, t);
+                pose.scales[j] = sample_vec3(track.timesS, track.scales, t);
+            }
+        }
+        return pose;
+    }
+
+    void evaluate_pose(SkinnedInstance& instance) {
+        if (!instance.asset || !instance.asset->skin) return;
+
+        Skin* skin = instance.asset->skin;
+        int joint_count = skin->joint_count;
+
+        if (instance.joint_matrices.size() != static_cast<size_t>(joint_count)) {
+            instance.joint_matrices.resize(joint_count);
+        }
+
+        if (!instance.clip) {
+            for (int j = 0; j < joint_count; ++j) {
+                instance.joint_matrices[j] = glm::mat4(1.0f);
+            }
+            return;
+        }
+
+        AnimationClip* clip = instance.clip;
+
+        float t = instance.current_time;
+        if (clip->duration > 0.0f) {
+            t = fmod(t, clip->duration);
+            if (t < 0.0f) t += clip->duration;
+        }
+
+        std::vector<glm::mat4> local_matrices(joint_count, glm::mat4(1.0f));
+        std::vector<glm::mat4> global_matrices(joint_count, glm::mat4(1.0f));
+
+        for (int j = 0; j < joint_count; ++j) {
+            glm::vec3 translation(0.0f);
+            glm::quat rotation(1.0f, 0.0f, 0.0f, 0.0f);
+            glm::vec3 scale(1.0f);
+
+            if (j < static_cast<int>(clip->joints.size())) {
+                const auto& track = clip->joints[j];
+                translation = sample_vec3(track.timesT, track.translations, t);
+                rotation = sample_quat(track.timesR, track.rotations, t);
+                scale = sample_vec3(track.timesS, track.scales, t);
+            }
+
+            glm::mat4 T = glm::translate(glm::mat4(1.0f), translation);
+            glm::mat4 R = glm::mat4_cast(rotation);
+            glm::mat4 S = glm::scale(glm::mat4(1.0f), scale);
+            local_matrices[j] = T * R * S;
+        }
+
+        std::vector<bool> computed(joint_count, false);
+        int remaining = joint_count;
+        while (remaining > 0) {
+            bool progress = false;
+            for (int j = 0; j < joint_count; ++j) {
+                if (computed[j]) continue;
+                int parent = skin->parent_indices[j];
+                if (parent < 0 || parent >= joint_count || computed[parent]) {
+                    if (parent < 0 || parent >= joint_count)
+                        global_matrices[j] = local_matrices[j];
+                    else
+                        global_matrices[j] = global_matrices[parent] * local_matrices[j];
+                    computed[j] = true;
+                    --remaining;
+                    progress = true;
+                }
+            }
+            if (!progress) break;
+        }
+
+        for (int j = 0; j < joint_count; ++j) {
+            instance.joint_matrices[j] = global_matrices[j] * skin->inverse_bind_matrices[j];
+        }
+    }
+
+    struct SkinnedGPUDrawPushConstants {
+        glm::mat4 model_matrix;
+        glm::mat4 render_matrix;
+        VkDeviceAddress vertex_buffer;
+        VkDeviceAddress joint_buffer;
+    };
+
+    std::vector<glm::mat4> compute_global_pose(Skin* skin, const Pose& pose) {
+        int joint_count = skin->joint_count;
+        std::vector<glm::mat4> local_matrices(joint_count, glm::mat4(1.0f));
+        std::vector<glm::mat4> global_matrices(joint_count, glm::mat4(1.0f));
+
+        for (int j = 0; j < joint_count; ++j) {
+            glm::mat4 T = glm::translate(glm::mat4(1.0f), pose.translations[j]);
+            glm::mat4 R = glm::mat4_cast(pose.rotations[j]);
+            glm::mat4 S = glm::scale(glm::mat4(1.0f), pose.scales[j]);
+            local_matrices[j] = T * R * S;
+        }
+
+        std::vector<bool> computed(joint_count, false);
+        int remaining = joint_count;
+        while (remaining > 0) {
+            bool progress = false;
+            for (int j = 0; j < joint_count; ++j) {
+                if (computed[j]) continue;
+                int parent = skin->parent_indices[j];
+                if (parent < 0 || parent >= joint_count || computed[parent]) {
+                    if (parent < 0 || parent >= joint_count)
+                        global_matrices[j] = local_matrices[j];
+                    else
+                        global_matrices[j] = global_matrices[parent] * local_matrices[j];
+                    computed[j] = true;
+                    --remaining;
+                    progress = true;
+                }
+            }
+            if (!progress) break;
+        }
+        return global_matrices;
+    }
+
+    std::vector<glm::mat4> compute_skinning_matrices(Skin* skin, const std::vector<glm::mat4>& global_pose) {
+        int joint_count = skin->joint_count;
+        std::vector<glm::mat4> skinning_matrices(joint_count);
+        for (int j = 0; j < joint_count; ++j) {
+            skinning_matrices[j] = global_pose[j] * skin->inverse_bind_matrices[j];
+        }
+        return skinning_matrices;
+    }
+
+    void pose_set_local(Pose& pose, int joint, glm::vec3 translation, glm::quat rotation, glm::vec3 scale) {
+        if (joint < 0 || joint >= static_cast<int>(pose.translations.size())) return;
+        pose.translations[joint] = translation;
+        pose.rotations[joint] = rotation;
+        pose.scales[joint] = scale;
+    }
+
+    void pose_set_local(Pose& pose, Skin* skin, const string& name, glm::vec3 translation, glm::quat rotation, glm::vec3 scale) {
+        pose_set_local(pose, skin->find_joint(name), translation, rotation, scale);
+    }
+
+    void pose_set_global(SkinnedInstance& instance, int joint, glm::vec3 world_position, glm::quat world_rotation, glm::vec3 world_scale = glm::vec3(1.0f)) {
+        if (!instance.asset || !instance.asset->skin) return;
+        Skin* skin = instance.asset->skin;
+        if (joint < 0 || joint >= skin->joint_count) return;
+        if (joint >= static_cast<int>(instance.global_pose.size())) return;
+
+        glm::mat4 world = glm::translate(glm::mat4(1.0f), world_position) * glm::mat4_cast(world_rotation) * glm::scale(glm::mat4(1.0f), world_scale);
+        int parent = skin->parent_indices[joint];
+        glm::mat4 local = (parent < 0 || parent >= skin->joint_count) ? world : glm::inverse(instance.global_pose[parent]) * world;
+
+        instance.local_pose.translations[joint] = glm::vec3(local[3]);
+        instance.local_pose.rotations[joint] = glm::quat_cast(glm::mat3(local));
+        instance.local_pose.scales[joint] = world_scale;
+    }
+
+    void pose_set_global(SkinnedInstance& instance, const string& name, glm::vec3 world_position, glm::quat world_rotation, glm::vec3 world_scale = glm::vec3(1.0f)) {
+        if (!instance.asset || !instance.asset->skin) return;
+        pose_set_global(instance, instance.asset->skin->find_joint(name), world_position, world_rotation, world_scale);
+    }
+
+    glm::mat4 pose_get_global(SkinnedInstance& instance, int joint) {
+        if (joint < 0 || joint >= static_cast<int>(instance.global_pose.size())) return glm::mat4(1.0f);
+        return instance.global_pose[joint];
+    }
+
+    glm::mat4 pose_get_global(SkinnedInstance& instance, const string& name) {
+        if (!instance.asset || !instance.asset->skin) return glm::mat4(1.0f);
+        return pose_get_global(instance, instance.asset->skin->find_joint(name));
+    }
+
+    void update_animation(SkinnedInstance& instance, float dt) {
+        if (!instance.asset || !instance.asset->skin) return;
+        instance.current_time += dt;
+        instance.local_pose = sample_clip(instance.clip, instance.current_time, instance.asset->skin);
+    }
+
+    void finalize_pose(SkinnedInstance& instance) {
+        if (!instance.asset || !instance.asset->skin) return;
+        Skin* skin = instance.asset->skin;
+        instance.global_pose = compute_global_pose(skin, instance.local_pose);
+        instance.joint_matrices = compute_skinning_matrices(skin, instance.global_pose);
+    }
+
+    struct GPUSceneData {
+        glm::mat4 view;
+        glm::mat4 proj;
+        glm::mat4 viewproj;
+        glm::vec4 ambient_color;
+        glm::vec4 sunlight_direction;
+        glm::vec4 sunlight_color;
+    };
+
+    struct DescriptorAllocatorGrowable {
+    public:
+        struct PoolSizeRatio {
+            VkDescriptorType type;
+            float ratio;
+        };
+
+        void init(VkDevice device, uint32_t max_sets, span<PoolSizeRatio> pool_ratios) {
+            ratios.clear();
+
+            for (auto r : pool_ratios) {
+                ratios.push_back(r);
+            }
+
+            VkDescriptorPool new_pool = create_pool(device, max_sets, pool_ratios);
+
+            sets_per_pool = max_sets*1.5f;
+
+            ready_pools.push_back(new_pool);
+        }
+
+        void clear_pools(VkDevice device) {
+            for (auto p : ready_pools) {
+                vkResetDescriptorPool(device, p, 0);
+            }
+            for (auto p : full_pools) {
+                vkResetDescriptorPool(device, p, 0);
+                ready_pools.push_back(p);
+            }
+            full_pools.clear();
+        }
+
+        void destroy_pools(VkDevice device) {
+            for (auto p : ready_pools) {
+                vkDestroyDescriptorPool(device, p, nullptr);
+            }
+            ready_pools.clear();
+            for (auto p : full_pools) {
+                vkDestroyDescriptorPool(device, p, nullptr);
+            }
+            full_pools.clear();
+        }
+
+        VkDescriptorSet allocate(VkDevice device, VkDescriptorSetLayout layout, void* pNext = nullptr) {
+            VkDescriptorPool pool_to_use = get_pool(device);
+
+            VkDescriptorSetAllocateInfo allocate_info = {};
+            allocate_info.pNext = pNext;
+            allocate_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+            allocate_info.descriptorPool = pool_to_use;
+            allocate_info.descriptorSetCount = 1;
+            allocate_info.pSetLayouts = &layout;
+
+            VkDescriptorSet ds;
+            VkResult result = vkAllocateDescriptorSets(device, &allocate_info, &ds);
+
+            if (result == VK_ERROR_OUT_OF_POOL_MEMORY || result == VK_ERROR_FRAGMENTED_POOL) {
+                full_pools.push_back(pool_to_use);
+
+                pool_to_use = get_pool(device);
+                allocate_info.descriptorPool = pool_to_use;
+
+                VK_CHECK(vkAllocateDescriptorSets(device, &allocate_info, &ds));
+            }
+
+            ready_pools.push_back(pool_to_use);
+            return ds;
+        }
+
+    private:
+        VkDescriptorPool get_pool(VkDevice device) {
+            VkDescriptorPool new_pool;
+            if (ready_pools.size() != 0) {
+                new_pool = ready_pools.back();
+                ready_pools.pop_back();
+            } else {
+                new_pool = create_pool(device, sets_per_pool, ratios);
+
+                sets_per_pool = sets_per_pool * 1.5;
+                if (sets_per_pool > 4096) sets_per_pool = 4096;
+
+            }
+
+            return new_pool;
+        }
+
+        VkDescriptorPool create_pool(VkDevice device, uint32_t set_count, span<PoolSizeRatio> pool_ratios) {
+            vector<VkDescriptorPoolSize> pool_sizes;
+            for (PoolSizeRatio ratio : pool_ratios) {
+                pool_sizes.push_back(VkDescriptorPoolSize{
+                .type = ratio.type,
+                .descriptorCount = static_cast<uint32_t>(ratio.ratio * set_count)
+                });
+            }
+
+            VkDescriptorPoolCreateInfo pool_info = {};
+            pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+            pool_info.flags = 0;
+            pool_info.maxSets = set_count;
+            pool_info.poolSizeCount = static_cast<uint32_t>(pool_sizes.size());
+            pool_info.pPoolSizes = pool_sizes.data();
+
+            VkDescriptorPool new_pool;
+            vkCreateDescriptorPool(device, &pool_info, nullptr, &new_pool);
+            return new_pool;
+        }
+
+        vector<PoolSizeRatio> ratios;
+        vector<VkDescriptorPool> full_pools;
+        vector<VkDescriptorPool> ready_pools;
+        uint32_t sets_per_pool;
+    };
+
+    struct DescriptorWriter {
+        deque<VkDescriptorImageInfo> image_infos;
+        deque<VkDescriptorBufferInfo> buffer_infos;
+        vector<VkWriteDescriptorSet> writes;
+
+        void write_image(int binding, VkImageView image, VkSampler sampler, VkImageLayout layout, VkDescriptorType type) {
+            VkDescriptorImageInfo& info = image_infos.emplace_back(VkDescriptorImageInfo{
+            .sampler = sampler,
+            .imageView = image,
+            .imageLayout = layout
+            });
+
+            VkWriteDescriptorSet write = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+
+            write.dstBinding = binding;
+            write.dstSet = VK_NULL_HANDLE;
+            write.descriptorCount = 1;
+            write.descriptorType = type;
+            write.pImageInfo = &info;
+
+            writes.push_back(write);
+        }
+
+        void write_buffer(int binding, VkBuffer buffer, size_t size, size_t offset, VkDescriptorType type) {
+            VkDescriptorBufferInfo& info = buffer_infos.emplace_back(VkDescriptorBufferInfo{
+            .buffer = buffer,
+            .offset = offset,
+            .range = size
+            });
+
+            VkWriteDescriptorSet write = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+
+            write.dstBinding = binding;
+            write.dstSet = VK_NULL_HANDLE;
+            write.descriptorCount = 1;
+            write.descriptorType = type;
+            write.pBufferInfo = &info;
+
+            writes.push_back(write);
+        }
+
+        void clear() {
+            image_infos.clear();
+            writes.clear();
+            buffer_infos.clear();
+        }
+
+        void update_set(VkDevice device, VkDescriptorSet set) {
+            for (VkWriteDescriptorSet& write : writes) {
+                write.dstSet = set;
+            }
+
+            vkUpdateDescriptorSets(device, static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+        }
+    };
+
+    struct Material {
+        AllocatedImage albedo_map;
+        AllocatedImage normal_map;
+        AllocatedImage roughness_map;
+        AllocatedImage metallic_map;
+        AllocatedImage emissive_map;
+        AllocatedImage ao_map;
+
+        float scalar_tint;
+        float roughness;
+        float metallic;
+
+        VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
+    };
+
+    struct RenderQueueMesh {
+        MeshAsset* mesh;
+        Material material;
+        glm::vec3 position;
+        glm::vec3 scale;
+        glm::quat rotation;
+    };
+
+    struct RenderQueueSkinned {
+        SkinnedMeshAsset* mesh;
+        Material material;
+        glm::vec3 position;
+        glm::vec3 scale;
+        glm::quat rotation;
+        VkDeviceAddress joint_buffer;
+    };
+
+    struct Plane {
+        glm::vec3 normal;
+        float distance;
+    };
+
+    void calculate_AABB(glm::vec3& min, glm::vec3& max, vector<Vertex> vertices) {
+        for (Vertex vert : vertices) {
+            if (vert.position.x < min.x) min.x = vert.position.x;
+            if (vert.position.y < min.y) min.y = vert.position.y;
+            if (vert.position.z < min.z) min.z = vert.position.z;
+
+            if (vert.position.x > max.x) max.x = vert.position.x;
+            if (vert.position.y > max.y) max.y = vert.position.y;
+            if (vert.position.z > max.z) max.z = vert.position.z;
+        }
+    }
+
+    void calculate_world_AABB(glm::vec3& min, glm::vec3& max, const RenderQueueMesh& rqm)
+    {
+        const glm::vec3& localMin = rqm.mesh->AABB_min;
+        const glm::vec3& localMax = rqm.mesh->AABB_max;
+
+        glm::mat4 model = glm::translate(glm::mat4(1.f), rqm.position) * glm::mat4_cast(rqm.rotation) * glm::scale(glm::mat4(1.f), rqm.scale);
+
+        glm::vec3 corners[8] = {
+            glm::vec3(localMin.x, localMin.y, localMin.z),
+            glm::vec3(localMax.x, localMin.y, localMin.z),
+            glm::vec3(localMin.x, localMax.y, localMin.z),
+            glm::vec3(localMax.x, localMax.y, localMin.z),
+            glm::vec3(localMin.x, localMin.y, localMax.z),
+            glm::vec3(localMax.x, localMin.y, localMax.z),
+            glm::vec3(localMin.x, localMax.y, localMax.z),
+            glm::vec3(localMax.x, localMax.y, localMax.z)
+        };
+
+        min = glm::vec3(FLT_MAX);
+        max = glm::vec3(-FLT_MAX);
+
+        for(int i = 0; i < 8; i++) {
+            glm::vec4 p = model * glm::vec4(corners[i], 1.0f);
+            p /= p.w;
+            min.x = glm::min(min.x, p.x);
+            min.y = glm::min(min.y, p.y);
+            min.z = glm::min(min.z, p.z);
+            max.x = glm::max(max.x, p.x);
+            max.y = glm::max(max.y, p.y);
+            max.z = glm::max(max.z, p.z);
+        }
+    }
+
+    bool is_AABB_inside_frustum(glm::vec3 min, glm::vec3 max, Plane left, Plane right, Plane bottom, Plane top, Plane near, Plane far) {
+        Plane planes[6] = {left, right, bottom, top, near, far};
+
+        for (int i = 0; i < 6; i++) {
+            const Plane& p = planes[i];
+
+            glm::vec3 positive_vertex;
+            positive_vertex.x = (p.normal.x >= 0.f) ? max.x : min.x;
+            positive_vertex.y = (p.normal.y >= 0.f) ? max.y : min.y;
+            positive_vertex.z = (p.normal.z >= 0.f) ? max.z : min.z;
+
+            float distance = p.normal.x * positive_vertex.x + p.normal.y * positive_vertex.y + p.normal.z * positive_vertex.z + p.distance;
+
+            if (distance < 0.f) return false;
+        }
+        return true;
+    }
+
+    void extract_frustum_planes(const glm::mat4& matrix, Plane& left, Plane& right, Plane& bottom, Plane& top, Plane& near, Plane& far) {
+        glm::vec4 row0 = glm::row(matrix, 0);
+        glm::vec4 row1 = glm::row(matrix, 1);
+        glm::vec4 row2 = glm::row(matrix, 2);
+        glm::vec4 row3 = glm::row(matrix, 3);
+
+        glm::vec4 leftPlane = row3+row0;
+        glm::vec4 rightPlane = row3-row0;
+        glm::vec4 bottomPlane = row3+row1;
+        glm::vec4 topPlane = row3-row1;
+        glm::vec4 nearPlane = row3+row2;
+        glm::vec4 farPlane = row3-row2;
+
+        auto normalize_plane = [](glm::vec4 p) -> Plane {
+            float length = glm::length(glm::vec3(p));
+            if (length > 0.00001f) {
+                p /= length;
+            }
+            return Plane{ glm::vec3(p), p.w };
+        };
+
+        left = normalize_plane(leftPlane);
+        right = normalize_plane(rightPlane);
+        bottom = normalize_plane(bottomPlane);
+        top = normalize_plane(topPlane);
+        near = normalize_plane(nearPlane);
+        far = normalize_plane(farPlane);
+    }
+
+    struct CubeMap {
+        AllocatedImage image;
+        VkImageView image_view;
+        VkSampler sampler;
+    };
+
+    struct Skybox {
+        GPUMeshBuffers mesh_buffers;
+        CubeMap cubemap;
+        VkPipeline pip;
+        VkPipelineLayout piplayout;
+        VkDescriptorSetLayout desc_layout;
+    };
+
+    struct GPUDirectionalLight {
+        glm::vec3 direction;
+        float _pad0;
+
+        glm::vec3 color;
+        float intensity;
+
+        glm::vec3 camera_pos;
+        float _pad1;
+
+        glm::vec3 ambient_color;
+        float ambient_intensity;
+    }; // 64 bytes std140
+
+    struct GPUPointLight {
+        glm::vec3 position;
+        float _pad0;
+        glm::vec3 color;
+        float range;
+        float intensity;
+        float _pad1;
+        float _pad2;
+        float _pad3;
+    }; // 48 bytes std430
+
+    struct GPUSpotLight {
+        glm::vec3 position;
+        float _pad0;
+        glm::vec3 direction;
+        float _pad1;
+        glm::vec3 color;
+        float range;
+        float intensity;
+        float _pad2;
+        float _pad3;
+        float _pad4;
+    }; // 64 bytes std430
+
+    struct GPULightCounts {
+        uint32_t point_light_count;
+        uint32_t spot_light_count;
+        uint32_t _pad0;
+        uint32_t _pad1;
+    }; // 16 bytes std140
+
     inline SDL_Window* window = nullptr;
     inline DeletionQueue _main_deletion_queue;
 

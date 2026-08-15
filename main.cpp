@@ -62,14 +62,14 @@ int main() {
     gvk::init();
     srand (static_cast <unsigned> (time(0)));
 
-    vector<shared_ptr<MeshAsset>> test_meshes = gvk::load_gltf_meshes("../test_monkey.glb").value();
+    vector<shared_ptr<gvk::MeshAsset>> test_meshes = gvk::load_gltf_meshes("../test_monkey.glb").value();
 
     // skinned mesh
     gvk::SkinnedGLTFData _gordon_freeman_returns = gvk::load_gltf_meshes_skinned("../dancing.glb").value();
-    SkinnedMeshAsset* gordon_freeman = _gordon_freeman_returns.meshes[0].get();
+    gvk::SkinnedMeshAsset* gordon_freeman = _gordon_freeman_returns.meshes[0].get();
     gordon_freeman->skin = &_gordon_freeman_returns.skins[0];
 
-    SkinnedInstance instance;
+    gvk::SkinnedInstance instance;
     instance.asset = gordon_freeman;
     if (!_gordon_freeman_returns.animations.empty()) {
         instance.clip = &_gordon_freeman_returns.animations[0];
@@ -79,8 +79,8 @@ int main() {
     instance.current_time = 0.f;
     instance.joint_matrices.resize(_gordon_freeman_returns.skins[0].joint_count);
 
-    AllocatedImage monkey_texture = gvk::load_image("../custom.png").value();
-    AllocatedImage water_normal = gvk::load_image("../water normal.jpg").value();
+    gvk::AllocatedImage monkey_texture = gvk::load_image("../custom.png").value();
+    gvk::AllocatedImage water_normal = gvk::load_image("../water normal.jpg").value();
 
     gvk::Surface leclerc_surface;
     leclerc_surface.load_from_file("../custom.jpg");
@@ -105,8 +105,8 @@ int main() {
     create_posdatas(monkeyinstances, 100);
     create_posdatas(teapotinstances, 100);
 
-    Material monkeymat = gvk::create_material(monkey_texture, water_normal, gvk::_white_image, gvk::_black_image, gvk::_black_image, gvk::_black_image);
-    Material teapotmat = gvk::create_material(gvk::_error_checkerboard_image, water_normal, gvk::_white_image, gvk::_black_image, gvk::_black_image, gvk::_black_image);
+    gvk::Material monkeymat = gvk::create_material(monkey_texture, water_normal, gvk::_white_image, gvk::_black_image, gvk::_black_image, gvk::_black_image);
+    gvk::Material teapotmat = gvk::create_material(gvk::_error_checkerboard_image, water_normal, gvk::_white_image, gvk::_black_image, gvk::_black_image, gvk::_black_image);
 
     gvk::GLTFReturns scene1 = gvk::load_gltf_scene("../scene.glb").value();
     for (auto pl : scene1.point_lights) {
