@@ -5552,10 +5552,6 @@ namespace gvk {
         return result;
     }
 
-    // a shit ton of animation helpers incoming
-
-
-
     void init() {
         // --- SDL SETUP ---
         SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO);
