@@ -812,7 +812,15 @@ struct SkinnedVertex {
 struct Skin {
     std::vector<glm::mat4> inverse_bind_matrices;
     std::vector<int> parent_indices;
+    std::vector<string> names;
     int joint_count;
+
+    int find_joint(const string& name) {
+        for (int j = 0; j < joint_count; ++j) {
+            if (names[j] == name) return j;
+        }
+        return -1;
+    }
 };
 
 struct AnimationClip {
@@ -824,6 +832,12 @@ struct AnimationClip {
         std::vector<glm::vec3> scales;
     };
     std::vector<JointTrack> joints;
+};
+
+struct Pose {
+    std::vector<glm::vec3> translations;
+    std::vector<glm::quat> rotations;
+    std::vector<glm::vec3> scales;
 };
 
 struct SkinnedMeshAsset {
@@ -839,6 +853,8 @@ struct SkinnedInstance {
     SkinnedMeshAsset* asset = nullptr;
     AnimationClip* clip = nullptr;
     float current_time = 0.0f;
+    Pose local_pose;
+    std::vector<glm::mat4> global_pose;
     std::vector<glm::mat4> joint_matrices;
 };
 
@@ -874,6 +890,31 @@ glm::quat sample_quat(const std::vector<float>& times, const std::vector<glm::qu
     if (glm::dot(q0, q1) < 0.0f) q1 = -q1;
 
     return glm::normalize(glm::mix(q0, q1, alpha));
+}
+
+Pose sample_clip(AnimationClip* clip, float time, Skin* skin) {
+    int joint_count = skin->joint_count;
+    Pose pose;
+    pose.translations.resize(joint_count, glm::vec3(0.0f));
+    pose.rotations.resize(joint_count, glm::quat(1.0f, 0.0f, 0.0f, 0.0f));
+    pose.scales.resize(joint_count, glm::vec3(1.0f));
+    if (!clip) return pose;
+
+    float t = time;
+    if (clip->duration > 0.0f) {
+        t = fmod(t, clip->duration);
+        if (t < 0.0f) t += clip->duration;
+    }
+
+    for (int j = 0; j < joint_count; ++j) {
+        if (j < static_cast<int>(clip->joints.size())) {
+            const auto& track = clip->joints[j];
+            pose.translations[j] = sample_vec3(track.timesT, track.translations, t);
+            pose.rotations[j] = sample_quat(track.timesR, track.rotations, t);
+            pose.scales[j] = sample_vec3(track.timesS, track.scales, t);
+        }
+    }
+    return pose;
 }
 
 void evaluate_pose(SkinnedInstance& instance) {
@@ -953,6 +994,103 @@ struct SkinnedGPUDrawPushConstants {
     VkDeviceAddress vertex_buffer;
     VkDeviceAddress joint_buffer;
 };
+
+std::vector<glm::mat4> compute_global_pose(Skin* skin, const Pose& pose) {
+    int joint_count = skin->joint_count;
+    std::vector<glm::mat4> local_matrices(joint_count, glm::mat4(1.0f));
+    std::vector<glm::mat4> global_matrices(joint_count, glm::mat4(1.0f));
+
+    for (int j = 0; j < joint_count; ++j) {
+        glm::mat4 T = glm::translate(glm::mat4(1.0f), pose.translations[j]);
+        glm::mat4 R = glm::mat4_cast(pose.rotations[j]);
+        glm::mat4 S = glm::scale(glm::mat4(1.0f), pose.scales[j]);
+        local_matrices[j] = T * R * S;
+    }
+
+    std::vector<bool> computed(joint_count, false);
+    int remaining = joint_count;
+    while (remaining > 0) {
+        bool progress = false;
+        for (int j = 0; j < joint_count; ++j) {
+            if (computed[j]) continue;
+            int parent = skin->parent_indices[j];
+            if (parent < 0 || parent >= joint_count || computed[parent]) {
+                if (parent < 0 || parent >= joint_count)
+                    global_matrices[j] = local_matrices[j];
+                else
+                    global_matrices[j] = global_matrices[parent] * local_matrices[j];
+                computed[j] = true;
+                --remaining;
+                progress = true;
+            }
+        }
+        if (!progress) break;
+    }
+    return global_matrices;
+}
+
+std::vector<glm::mat4> compute_skinning_matrices(Skin* skin, const std::vector<glm::mat4>& global_pose) {
+    int joint_count = skin->joint_count;
+    std::vector<glm::mat4> skinning_matrices(joint_count);
+    for (int j = 0; j < joint_count; ++j) {
+        skinning_matrices[j] = global_pose[j] * skin->inverse_bind_matrices[j];
+    }
+    return skinning_matrices;
+}
+
+void pose_set_local(Pose& pose, int joint, glm::vec3 translation, glm::quat rotation, glm::vec3 scale) {
+    if (joint < 0 || joint >= static_cast<int>(pose.translations.size())) return;
+    pose.translations[joint] = translation;
+    pose.rotations[joint] = rotation;
+    pose.scales[joint] = scale;
+}
+
+void pose_set_local(Pose& pose, Skin* skin, const string& name, glm::vec3 translation, glm::quat rotation, glm::vec3 scale) {
+    pose_set_local(pose, skin->find_joint(name), translation, rotation, scale);
+}
+
+void pose_set_global(SkinnedInstance& instance, int joint, glm::vec3 world_position, glm::quat world_rotation, glm::vec3 world_scale = glm::vec3(1.0f)) {
+    if (!instance.asset || !instance.asset->skin) return;
+    Skin* skin = instance.asset->skin;
+    if (joint < 0 || joint >= skin->joint_count) return;
+    if (joint >= static_cast<int>(instance.global_pose.size())) return;
+
+    glm::mat4 world = glm::translate(glm::mat4(1.0f), world_position) * glm::mat4_cast(world_rotation) * glm::scale(glm::mat4(1.0f), world_scale);
+    int parent = skin->parent_indices[joint];
+    glm::mat4 local = (parent < 0 || parent >= skin->joint_count) ? world : glm::inverse(instance.global_pose[parent]) * world;
+
+    instance.local_pose.translations[joint] = glm::vec3(local[3]);
+    instance.local_pose.rotations[joint] = glm::quat_cast(glm::mat3(local));
+    instance.local_pose.scales[joint] = world_scale;
+}
+
+void pose_set_global(SkinnedInstance& instance, const string& name, glm::vec3 world_position, glm::quat world_rotation, glm::vec3 world_scale = glm::vec3(1.0f)) {
+    if (!instance.asset || !instance.asset->skin) return;
+    pose_set_global(instance, instance.asset->skin->find_joint(name), world_position, world_rotation, world_scale);
+}
+
+glm::mat4 pose_get_global(SkinnedInstance& instance, int joint) {
+    if (joint < 0 || joint >= static_cast<int>(instance.global_pose.size())) return glm::mat4(1.0f);
+    return instance.global_pose[joint];
+}
+
+glm::mat4 pose_get_global(SkinnedInstance& instance, const string& name) {
+    if (!instance.asset || !instance.asset->skin) return glm::mat4(1.0f);
+    return pose_get_global(instance, instance.asset->skin->find_joint(name));
+}
+
+void update_animation(SkinnedInstance& instance, float dt) {
+    if (!instance.asset || !instance.asset->skin) return;
+    instance.current_time += dt;
+    instance.local_pose = sample_clip(instance.clip, instance.current_time, instance.asset->skin);
+}
+
+void finalize_pose(SkinnedInstance& instance) {
+    if (!instance.asset || !instance.asset->skin) return;
+    Skin* skin = instance.asset->skin;
+    instance.global_pose = compute_global_pose(skin, instance.local_pose);
+    instance.joint_matrices = compute_skinning_matrices(skin, instance.global_pose);
+}
 
 struct GPUSceneData {
     glm::mat4 view;
@@ -3951,7 +4089,7 @@ namespace gvk {
     }
 
     void draw_skinned_mesh(SkinnedInstance& instance, Material material, glm::vec3 position = {0.f, 0.f, 0.f}, glm::vec3 scale = {1.f, 1.f, 1.f}, glm::quat rotation = {1.f, 0.f, 0.f, 0.f}) {
-        evaluate_pose(instance);
+        finalize_pose(instance);
         draw_skinned_mesh(instance.asset, material, instance.joint_matrices, position, scale, rotation);
     }
 
@@ -4907,6 +5045,10 @@ namespace gvk {
             skin.joint_count = static_cast<int>(gltf_skin.joints.size());
             skin.parent_indices.assign(skin.joint_count, -1);
             skin.inverse_bind_matrices.assign(skin.joint_count, glm::mat4(1.0f));
+            skin.names.assign(skin.joint_count, "");
+            for (int j = 0; j < skin.joint_count; j++) {
+                skin.names[j] = model.nodes[gltf_skin.joints[j]].name;
+            }
 
             std::unordered_map<int, int> node_to_joint;
             for (int j = 0; j < skin.joint_count; j++) {
@@ -5414,6 +5556,10 @@ namespace gvk {
 
         return result;
     }
+
+    // a shit ton of animation helpers incoming
+
+
 
     void init() {
         // --- SDL SETUP ---

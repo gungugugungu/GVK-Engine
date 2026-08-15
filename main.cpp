@@ -65,9 +65,10 @@ int main() {
     vector<shared_ptr<MeshAsset>> test_meshes = gvk::load_gltf_meshes("../test_monkey.glb").value();
 
     // skinned mesh
-    gvk::SkinnedGLTFData _gordon_freeman_returns = gvk::load_gltf_meshes_skinned("../human.glb").value();
+    gvk::SkinnedGLTFData _gordon_freeman_returns = gvk::load_gltf_meshes_skinned("../dancing.glb").value();
     SkinnedMeshAsset* gordon_freeman = _gordon_freeman_returns.meshes[0].get();
     gordon_freeman->skin = &_gordon_freeman_returns.skins[0];
+
     SkinnedInstance instance;
     instance.asset = gordon_freeman;
     if (!_gordon_freeman_returns.animations.empty()) {
@@ -122,7 +123,6 @@ int main() {
     while (running) {
         Uint64 now = SDL_GetTicks();
         float dt = (float)(now - last_time) / 1000.f;
-        instance.current_time += dt;
         last_time = now;
 
         SDL_Event e;
@@ -162,6 +162,8 @@ int main() {
                 pitch = glm::clamp(pitch, -89.f, 89.f);
             }
         }
+
+        update_animation(instance, dt);
 
         if (rmb_down) {
             glm::vec3 dir;
