@@ -1,5 +1,6 @@
 #pragma once
 #define VMA_IMPLEMENTATION
+#define GLM_ENABLE_EXPERIMENTAL
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <memory>
 #include <optional>
@@ -2004,9 +2005,9 @@ namespace gvk {
                 return;
             }
 
-            int height = pixels.size();
-            int width = pixels[0].size();
-            uint8_t data[height * width * 4];
+            const int height = pixels.size();
+            const int width = pixels[0].size();
+            std::vector<uint8_t> data(static_cast<size_t>(height) * width * 4);
             for (int i = 0; i < height; i++) {
                 for (int j = 0; j < width; j++) {
                     int idx = (i * width + j) * 4;
@@ -2018,7 +2019,7 @@ namespace gvk {
             }
 
             VkExtent3D extent = { static_cast<uint32_t>(pixels[0].size()), static_cast<uint32_t>(pixels.size()), 1 };
-            vk_image = create_image(data, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_SAMPLED_BIT);
+            vk_image = create_image(data.data(), extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_SAMPLED_BIT);
 
             if (!in_deletion_queue) {
                 _main_deletion_queue.push_function([&]() {
