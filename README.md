@@ -8,7 +8,7 @@ gvk::draw_mesh(mesh, material, position, scale, rotation);
 ```
 and the mesh is where you want it, how you want it.
 
-But don't mistake it, this is not a game engine, this is just a renderer, something you can build an engine on. I made this tool
+But don't mistake it, this is not a game engine, this is just a renderer, something you can build an engine on. I made this tool so my later projects have a graphical backbone to build on, but every game needs a different engine.
 
 ## Features:
 - Full 3D rendering capabilites
@@ -22,18 +22,13 @@ But don't mistake it, this is not a game engine, this is just a renderer, someth
 - Material system
 - Lighting with dynamic light count
 - Physically-based rendering
-
-## To-do:
-- Animated skinned meshes and armatures
-- A full demo
+- Animated and rigged meshes (mesh skinning)
+- A cool demo
 
 ## AI disclosure
-AI is a useful tool for learning something, but I realized if I use it for anything more, it becomes something that removes the fun from programming for me. That's why I only use AI in 3 cases:
-1. hard maths that I can't figure out on my own, so I use it as a math teacher
-2. this one occured a lot more when I started this project, now it's starting to disappear, and it's me asking AI to tell me what the equivalent of a sokol api function is in the vulkan api.
-3. Writing shaders are really hard, mostly because of the hard maths. Many of the shaders were written by an AI in this project, but that's a really small part that I really don't want to do.
-
-That's it, just a learning tool. (also, I did have it write 1 function in the entire code, and that is because I wrote the entire thing for my last engine and I was lazy to translate it to my new systems, so I just asked it to do it, I think that was for the better)
+This project was created so I could learn Vulkan, and if I copied everything from AI that would have been to effective. My goal was to use as little AI as I could, while still leaving out the headaches of development. Here's what I used AI for:
+1. Many of the shaders were written by AI, but that's because I haven't learned any of the maths I need to know to write any of these shader. When a shader wasn't too math heavy I wrote it myself, but there weren't too many of those.
+2. The GLTF loading isn't hard, it's just a headache to work with it. GLTF is a horrible format for developers, but it's the best I knew, so I rather had AI write the GLTF loading functions. I'm still glad I did that, I would have learned nothing from writing those.
 
 ## External projects used:
 - [Vulkan](https://vulkan.lunarg.com/)
