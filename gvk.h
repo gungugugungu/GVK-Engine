@@ -1479,11 +1479,12 @@ namespace gvk {
     inline vector<VkImage> _swapchain_images;
     inline vector<VkImageView> _swapchain_image_views;
     inline VkExtent2D _swapchain_extent;
+    inline vector<VkSemaphore> _render_semaphores;
 
     struct FrameData {
         VkCommandPool _commandPool;
         VkCommandBuffer _mainCommandBuffer;
-        VkSemaphore _swapchain_semaphore, _render_semaphore;
+        VkSemaphore _swapchain_semaphore;
         VkFence _render_fence;
         DeletionQueue _deletion_queue;
         DescriptorAllocatorGrowable _frame_descriptors;
@@ -2755,9 +2756,9 @@ namespace gvk {
 
             _main_deletion_queue.push_function([&]() {
                 destroy_image(_bloom_comp_image);
-                vkDestroyPipelineLayout(_vk_device, _bloom_pipeline_layout, nullptr);
-                vkDestroyPipeline(_vk_device, _bloom_pipeline, nullptr);
-                vkDestroyDescriptorSetLayout(_vk_device, _bloom_descriptor_layout, nullptr);
+                vkDestroyPipelineLayout(_vk_device, _bloom_comp_pipeline_layout, nullptr);
+                vkDestroyPipeline(_vk_device, _bloom_comp_pipeline, nullptr);
+                vkDestroyDescriptorSetLayout(_vk_device, _bloom_comp_descriptor_layout, nullptr);
             });
         }
 
@@ -3105,9 +3106,9 @@ namespace gvk {
             vkDestroyShaderModule(_vk_device, comp_frag_shader, nullptr);
 
             _main_deletion_queue.push_function([&]() {
-                vkDestroyPipelineLayout(_vk_device, _ao_pipeline_layout, nullptr);
-                vkDestroyPipeline(_vk_device, _ao_pipeline, nullptr);
-                vkDestroyDescriptorSetLayout(_vk_device, _ao_descriptor_layout, nullptr);
+                vkDestroyPipelineLayout(_vk_device, _ao_comp_pipeline_layout, nullptr);
+                vkDestroyPipeline(_vk_device, _ao_comp_pipeline, nullptr);
+                vkDestroyDescriptorSetLayout(_vk_device, _ao_comp_descriptor_layout, nullptr);
             });
         }
 
@@ -3663,7 +3664,7 @@ namespace gvk {
         vkb::InstanceBuilder builder;
 
         auto inst_ret = builder.set_app_name("GVK RENDERER")
-            .request_validation_layers(true) // TODO: When the project is done, set to false
+            .request_validation_layers(true) // VALIDATION LAYERS IF YOU WANT IT
             .use_default_debug_messenger()
             .require_api_version(1, 3, 0)
             .build();
@@ -3728,6 +3729,12 @@ namespace gvk {
         _swapchain = vkb_swapchain.swapchain;
         _swapchain_images = vkb_swapchain.get_images().value();
         _swapchain_image_views = vkb_swapchain.get_image_views().value();
+
+        _render_semaphores.resize(_swapchain_images.size());
+        VkSemaphoreCreateInfo render_semaphore_info = create_semaphore_info(0);
+        for (size_t i = 0; i < _swapchain_images.size(); i++) {
+            VK_CHECK(vkCreateSemaphore(_vk_device, &render_semaphore_info, nullptr, &_render_semaphores[i]));
+        }
     }
 
     void destroy_swapchain() {
@@ -3736,6 +3743,11 @@ namespace gvk {
 
             vkDestroyImageView(_vk_device, _swapchain_image_views[i], nullptr);
         }
+
+        for (VkSemaphore s : _render_semaphores) {
+            vkDestroySemaphore(_vk_device, s, nullptr);
+        }
+        _render_semaphores.clear();
     }
 
     void init_swapchain() {
@@ -3881,7 +3893,6 @@ namespace gvk {
             VK_CHECK(vkCreateFence(_vk_device, &fence_create_info, nullptr, &_frames[i]._render_fence));
 
             VK_CHECK(vkCreateSemaphore(_vk_device, &semaphore_create_info, nullptr, &_frames[i]._swapchain_semaphore));
-            VK_CHECK(vkCreateSemaphore(_vk_device, &semaphore_create_info, nullptr, &_frames[i]._render_semaphore));
         }
 
         // imgui
@@ -3935,6 +3946,7 @@ namespace gvk {
             destroy_image(_gray_image);
             destroy_image(_black_image);
             destroy_image(_error_checkerboard_image);
+            destroy_image(_normal_image);
         });
     }
 
@@ -4575,7 +4587,7 @@ namespace gvk {
         result.image_view = new_image.image_view;
         VK_CHECK(vkCreateSampler(_vk_device, &sampler_info, nullptr, &result.sampler));
 
-        _main_deletion_queue.push_function([&]() {
+        _main_deletion_queue.push_function([=]() {
             destroy_image(new_image);
             vkDestroySampler(_vk_device, result.sampler, nullptr);
         });
@@ -4734,6 +4746,10 @@ namespace gvk {
             calculate_AABB(new_mesh.AABB_min, new_mesh.AABB_max, vertices);
 
             new_mesh.mesh_buffers = upload_mesh(indices, vertices);
+            _main_deletion_queue.push_function([buffers = new_mesh.mesh_buffers]() {
+                destroy_buffer(buffers.vertex_buffer);
+                destroy_buffer(buffers.index_buffer);
+            });
             meshes.emplace_back(make_shared<MeshAsset>(move(new_mesh)));
         }
 
@@ -4791,7 +4807,11 @@ namespace gvk {
             const auto& img = model.images[tex.source];
             if (img.image.empty()) return fallback;
             VkExtent3D extent = { (uint32_t)img.width, (uint32_t)img.height, 1 };
-            return create_image((void*)img.image.data(), extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_SAMPLED_BIT);
+            AllocatedImage tex_image = create_image((void*)img.image.data(), extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_SAMPLED_BIT);
+            _main_deletion_queue.push_function([tex_image]() {
+                destroy_image(tex_image);
+            });
+            return tex_image;
         };
 
         for (size_t mi = 0; mi < model.materials.size(); mi++) {
@@ -4911,6 +4931,10 @@ namespace gvk {
             calculate_AABB(new_mesh.AABB_min, new_mesh.AABB_max, vertices);
 
             new_mesh.mesh_buffers = upload_mesh(indices, vertices);
+            _main_deletion_queue.push_function([buffers = new_mesh.mesh_buffers]() {
+                destroy_buffer(buffers.vertex_buffer);
+                destroy_buffer(buffers.index_buffer);
+            });
             loaded_meshes.emplace_back(make_shared<MeshAsset>(move(new_mesh)));
         }
 
@@ -5203,7 +5227,11 @@ namespace gvk {
             const auto& img = model.images[tex.source];
             if (img.image.empty()) return fallback;
             VkExtent3D extent = { (uint32_t)img.width, (uint32_t)img.height, 1 };
-            return create_image((void*)img.image.data(), extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_SAMPLED_BIT);
+            AllocatedImage tex_image = create_image((void*)img.image.data(), extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_SAMPLED_BIT);
+            _main_deletion_queue.push_function([tex_image]() {
+                destroy_image(tex_image);
+            });
+            return tex_image;
         };
 
         result.materials.resize(model.materials.size());
@@ -5426,6 +5454,10 @@ namespace gvk {
                 destroy_buffer(staging);
 
                 new_mesh.mesh_buffers = new_surface;
+                _main_deletion_queue.push_function([buffers = new_surface]() {
+                    destroy_buffer(buffers.vertex_buffer);
+                    destroy_buffer(buffers.index_buffer);
+                });
             }
 
             result.meshes.emplace_back(make_shared<SkinnedMeshAsset>(move(new_mesh)));
@@ -5646,7 +5678,7 @@ namespace gvk {
         // prepare submission to queue
         VkCommandBufferSubmitInfo cmd_info = make_command_buffer_submit_info(cmd);
         VkSemaphoreSubmitInfo wait_info = make_semaphore_submit_info(VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR,get_current_frame()._swapchain_semaphore);
-        VkSemaphoreSubmitInfo signal_info = make_semaphore_submit_info(VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT, get_current_frame()._render_semaphore);
+        VkSemaphoreSubmitInfo signal_info = make_semaphore_submit_info(VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT, _render_semaphores[swapchain_image_index]);
         VkSubmitInfo2 submit = submit_info(&cmd_info, &signal_info, &wait_info);
 
         // submit command buffer to the queue and execute it; commands are blocked until this is over
@@ -5659,7 +5691,7 @@ namespace gvk {
         present_info.pSwapchains = &_swapchain;
         present_info.swapchainCount = 1;
 
-        present_info.pWaitSemaphores = &get_current_frame()._render_semaphore;
+        present_info.pWaitSemaphores = &_render_semaphores[swapchain_image_index];
         present_info.waitSemaphoreCount = 1;
 
         present_info.pImageIndices = &swapchain_image_index;
@@ -5676,6 +5708,7 @@ namespace gvk {
             _frames[i]._deletion_queue.flush();
             _frames[i]._frame_descriptors.destroy_pools(_vk_device);
         }
+        material_descriptor_allocator.destroy_pools(_vk_device);
 
         destroy_swapchain();
 
@@ -5683,7 +5716,6 @@ namespace gvk {
             vkDestroyCommandPool(_vk_device, _frames[i]._commandPool, nullptr);
 
             vkDestroyFence(_vk_device, _frames[i]._render_fence, nullptr);
-            vkDestroySemaphore(_vk_device, _frames[i]._render_semaphore, nullptr);
             vkDestroySemaphore(_vk_device, _frames[i]._swapchain_semaphore, nullptr);
         }
 

@@ -119,11 +119,16 @@ int main() {
         gvk::directional_light = scene1.dir_light;
     }
 
+    gvk::camera.position = glm::vec3{0.f, 2.f, 2.f};
+    gvk::camera.direction = glm::vec3{0.f, 0.f, -1.f};
+
     bool running = true;
     while (running) {
         Uint64 now = SDL_GetTicks();
         float dt = (float)(now - last_time) / 1000.f;
         last_time = now;
+        int w_width, w_height;
+        SDL_GetWindowSize(gvk::window, &w_width, &w_height);
 
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
@@ -189,10 +194,11 @@ int main() {
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
 
-        ImGui::Begin("Tonemapping variables");
+        ImGui::Begin("EDITOR (kinda an editor I guess)", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+        ImGui::SetWindowPos(ImVec2(10, 10));
 
         if (ImGui::CollapsingHeader("LIGHTS")) {
-            ImGui::BeginChild("LIGHTSIES");
+            ImGui::BeginChild("LIGHTSIES", ImVec2(0, 0), ImGuiChildFlags_AlwaysAutoResize);
             if (ImGui::CollapsingHeader("AMBIENT LIGHT")) {
                 float colorthingy[3] = {gvk::ambient_light.color.x, gvk::ambient_light.color.y, gvk::ambient_light.color.z};
                 ImGui::ColorPicker3("COLOR", colorthingy);
@@ -214,8 +220,7 @@ int main() {
                 gvk::directional_light.color.z = colorthingy[2];
                 ImGui::SliderFloat("INTENSITY", &gvk::directional_light.intensity, 0.f, 20.f);
             }
-            if (ImGui::CollapsingHeader("POINT LIGHTS"))
-            {
+            if (ImGui::CollapsingHeader("POINT LIGHTS")) {
                 static int selected_point = -1;
 
                 ImGui::BeginChild("POINT LIGHTS LIST", ImVec2(ImGui::GetContentRegionAvail().x * 0.4f, 220), true);
@@ -376,6 +381,16 @@ int main() {
         }
 
         ImGui::End();
+
+        // Tutorial window
+        ImGui::Begin("DEMO", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
+        ImGui::SetWindowPos(ImVec2(static_cast<float>(w_width)-ImGui::GetWindowWidth()-10, 10));
+        ImGui::Text("This is a demo window.\nJust a quick reminder: this is not a game engine, this is a renderer.\nThis is just meant to look pretty, so don't expect any fancy fatures");
+        ImGui::Separator();
+        ImGui::Text("Hold right click to rotate the camera");
+        ImGui::Text("Press WASD to move around and E and Q to move up and down");
+        ImGui::End();
+
         // RENDER
         ImGui::Render();
 
@@ -392,17 +407,13 @@ int main() {
             gvk::draw_mesh(&mesh.mesh, mesh.material, mesh.position, mesh.scale, mesh.rot);
         }
 
-        gvk::draw_skinned_mesh(instance, _gordon_freeman_returns.materials[0], {0.f, 0.f, 0.f}, {1.f, 1.f, 1.f}, {1.f, 0.f, 0.f, 0.f});
+        gvk::draw_skinned_mesh(instance, _gordon_freeman_returns.materials[0], {-1.f, 0.f, 0.f}, {0.01f, 0.01f, 0.01f}, glm::quat(glm::vec3{ 1.570796f, 0.f, 0.f}));
 
         gvk::draw();
     }
 
     vkDeviceWaitIdle(gvk::_vk_device);
 
-    for (auto& mesh : test_meshes) {
-        gvk::destroy_buffer(mesh->mesh_buffers.vertex_buffer);
-        gvk::destroy_buffer(mesh->mesh_buffers.index_buffer);
-    }
     gvk::destroy_image(monkey_texture);
     gvk::destroy_image(water_normal);
 
