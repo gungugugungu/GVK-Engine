@@ -62,8 +62,6 @@ int main() {
     gvk::init();
     srand (static_cast <unsigned> (time(0)));
 
-    vector<shared_ptr<gvk::MeshAsset>> test_meshes = gvk::load_gltf_meshes("../test_monkey.glb").value();
-
     // skinned mesh
     gvk::SkinnedGLTFData _gordon_freeman_returns = gvk::load_gltf_meshes_skinned("../dancing.glb").value();
     gvk::SkinnedMeshAsset* gordon_freeman = _gordon_freeman_returns.meshes[0].get();
@@ -79,12 +77,6 @@ int main() {
     instance.current_time = 0.f;
     instance.joint_matrices.resize(_gordon_freeman_returns.skins[0].joint_count);
 
-    gvk::AllocatedImage monkey_texture = gvk::load_image("../custom.png").value();
-    gvk::AllocatedImage water_normal = gvk::load_image("../water normal.jpg").value();
-
-    gvk::Surface leclerc_surface;
-    leclerc_surface.load_from_file("../custom.jpg");
-
     gvk::load_skybox("../textures/skyboxes/night.png");
 
     gvk::clear_color = {0.05f, 0.05f, 0.05f, 1.f};
@@ -97,16 +89,6 @@ int main() {
     bool rmb_down = false;
 
     Uint64 last_time = SDL_GetTicks();
-
-    // instanced meshes demo
-    vector<posdata> monkeyinstances;
-    vector<posdata> teapotinstances;
-
-    create_posdatas(monkeyinstances, 100);
-    create_posdatas(teapotinstances, 100);
-
-    gvk::Material monkeymat = gvk::create_material(monkey_texture, water_normal, gvk::_white_image, gvk::_black_image, gvk::_black_image, gvk::_black_image);
-    gvk::Material teapotmat = gvk::create_material(gvk::_error_checkerboard_image, water_normal, gvk::_white_image, gvk::_black_image, gvk::_black_image, gvk::_black_image);
 
     gvk::GLTFReturns scene1 = gvk::load_gltf_scene("../scene.glb").value();
     for (auto pl : scene1.point_lights) {
@@ -394,15 +376,6 @@ int main() {
         // RENDER
         ImGui::Render();
 
-        /*
-        for (auto inst : monkeyinstances) {
-            gvk::draw_mesh(test_meshes[0], monkeymat, inst.pos, inst.scale, glm::quat(inst.rot));
-        }
-        for (auto inst : teapotinstances) {
-            gvk::draw_mesh(test_meshes[1], teapotmat, inst.pos, inst.scale, glm::quat(inst.rot));
-        }
-        */
-
         for (auto& mesh : scene1.meshes) {
             gvk::draw_mesh(&mesh.mesh, mesh.material, mesh.position, mesh.scale, mesh.rot);
         }
@@ -413,9 +386,6 @@ int main() {
     }
 
     vkDeviceWaitIdle(gvk::_vk_device);
-
-    gvk::destroy_image(monkey_texture);
-    gvk::destroy_image(water_normal);
 
     gvk::quit();
     return 0;

@@ -6,17 +6,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # ================ Dependencies ================
 
 # --- SDL3 ---
-add_subdirectory(${CMAKE_SOURCE_DIR}/include/SDL)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/include/SDL)
 
 # --- GLM ----
-add_subdirectory(${CMAKE_SOURCE_DIR}/include/glm)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/include/glm)
 
 # --- Vulkan and Vk-Bootstrap ---
 find_package(Vulkan REQUIRED)
-add_subdirectory(${CMAKE_SOURCE_DIR}/include/vk-bootstrap)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/include/vk-bootstrap)
 
 # --- IMGUI ---
-set(IMGUI_PATH "${CMAKE_SOURCE_DIR}/include/imgui/")
+set(IMGUI_PATH "${CMAKE_CURRENT_SOURCE_DIR}/include/imgui/")
 set(IMGUI_BACKENDS_PATH "${IMGUI_PATH}/backends")
 
 file(GLOB IMGUI_SOURCES ${IMGUI_PATH}/*.cpp)
@@ -38,19 +38,23 @@ target_link_libraries(ImGui PUBLIC
 )
 
 # --- FMT ---
-add_subdirectory(${CMAKE_SOURCE_DIR}/include/fmt)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/include/fmt)
 
 # --- TINYGLTF ---
-add_subdirectory(${CMAKE_SOURCE_DIR}/include/tinygltf)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/include/tinygltf)
 
-# ================ Executable ================
+add_library(gvk INTERFACE)
+add_library(gvk::gvk ALIAS gvk)
 
-add_executable(GVK
-        main.cpp
+target_include_directories(gvk INTERFACE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/glm
+        ${Vulkan_INCLUDE_DIRS}
+        ${IMGUI_PATH}
+        ${IMGUI_BACKENDS_PATH}
 )
 
-target_link_libraries(GVK
-    PRIVATE
+target_link_libraries(gvk INTERFACE
         SDL3::SDL3
         Vulkan::Vulkan
         fmt
@@ -60,9 +64,7 @@ target_link_libraries(GVK
         ${CMAKE_DL_LIBS}
 )
 
-target_include_directories(GVK
-    PRIVATE
-        ${Vulkan_INCLUDE_DIRS}
-        ${IMGUI_PATH}
-        ${IMGUI_BACKENDS_PATH}
-)
+if (PROJECT_IS_TOP_LEVEL)
+    add_executable(GVK main.cpp)
+    target_link_libraries(GVK PRIVATE gvk::gvk)
+endif()
