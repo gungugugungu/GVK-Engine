@@ -23,6 +23,15 @@ But don't mistake it, this is not a game engine, this is just a renderer, someth
 - Physically-based rendering
 - Animated and rigged meshes (mesh skinning)
 - A cool demo
+## How to try the demo
+Go to the releases section on Github and download either windows.demo.zip or linux.demo.zip *(depending on your os)* under the DEMO release. Once downloaded, just extract the zip file, go in the bin folder and open GVK executable
+
+**Make sure:**
+- Your GPU supports Vulkan
+- You have downloaded the latest graphics drivers for your GPU
+- You have downloaded the latest [visual studio redistributables](https://aka.ms/vc14/vc_redist.x86.exe)
+
+**Without these redistributables the project *can not* run at all**
 ## How to use
 I mentioned how I want this project to be simple, and it hopefully is. 
 
@@ -67,8 +76,6 @@ int main() {
     return 0;
 }
 ```
-## How to try the demo
-Go to the releases section on Github and download windows.demo.zip under the DEMO release. Once downloaded, just extract the zip file, go in the bin folder and open GVK.exe
 ## AI disclosure
 This project was created so I could learn Vulkan, and if I copied everything from AI that would have been to effective. My goal was to use as little AI as I could, while still leaving out the headaches of development. Here's what I used AI for:
 1. Many of the shaders were written by AI, but that's because I haven't learned any of the maths I need to know to write any of these shader. When a shader wasn't too math heavy I wrote it myself, but there weren't too many of those.
