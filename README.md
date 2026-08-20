@@ -29,7 +29,7 @@ Go to the releases section on Github and download either windows.demo.zip or lin
 **Make sure:**
 - Your GPU supports Vulkan
 - You have downloaded the latest graphics drivers for your GPU
-- You have downloaded the latest [visual studio redistributables](https://aka.ms/vc14/vc_redist.x86.exe)
+- *(ON WINDOWS)* You have downloaded the latest [visual studio redistributables](https://aka.ms/vc14/vc_redist.x86.exe)
 
 **Without these redistributables the project *can not* run at all**
 ## How to use
