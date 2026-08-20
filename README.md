@@ -31,7 +31,7 @@ Go to the releases section on Github and download either windows.demo.zip or lin
 - You have downloaded the latest graphics drivers for your GPU
 - *(ON WINDOWS)* You have downloaded the latest [visual studio redistributables](https://aka.ms/vc14/vc_redist.x86.exe)
 
-**Without these redistributables the project *can not* run at all**
+**If you don't meet any one of these requirements the project *can not* run at all**
 ## How to use
 I mentioned how I want this project to be simple, and it hopefully is. 
 
