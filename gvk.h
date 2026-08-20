@@ -2,6 +2,10 @@
 #define VMA_IMPLEMENTATION
 #define GLM_ENABLE_EXPERIMENTAL
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#define TINYGLTF3_IMPLEMENTATION
+#define STB_IMAGE_IMPLEMENTATION
+#define STB_TRUETYPE_IMPLEMENTATION
+#define STB_IMAGE_RESIZE_IMPLEMENTATION
 #include <memory>
 #include <optional>
 #include <string>
@@ -32,10 +36,9 @@
 #include <filesystem>
 #include <iostream>
 #include <glm/gtx/quaternion.hpp>
-
 #include "fmt/ostream.h"
 #include "include/glm/glm/gtc/matrix_access.hpp"
-#include "include/tinygltf/tiny_gltf.h"
+#include "include/tinygltf/tiny_gltf_v3.h"
 
 #define VK_CHECK(x) \
 do { \
@@ -47,6 +50,12 @@ abort(); \
 } while (0)
 
 using namespace std;
+
+inline string relative_gvk_path("../include/GVK-Engine");
+
+inline std::string gvk_shader(const char* name) {
+    return relative_gvk_path + "/shaders/" + name;
+}
 
 // hard-coded cube for skybxo
 std::vector<uint32_t> skybox_indices {
@@ -2144,10 +2153,10 @@ namespace gvk {
             vkCreatePipelineLayout(_vk_device, &layout_info, nullptr, &_vn_pipeline_layout);
 
             VkShaderModule vert_shader, frag_shader;
-            if (!load_shader_module("../shaders/fullscreen_triangle.vert.spv", _vk_device, &vert_shader)) {
+            if (!load_shader_module(gvk_shader("fullscreen_triangle.vert.spv").c_str(), _vk_device, &vert_shader)) {
                 cout << "error when loading vignette vert (aka fullscreen triangle) shader" << endl;
             }
-            if (!load_shader_module("../shaders/vignette.frag.spv", _vk_device, &frag_shader)) {
+            if (!load_shader_module(gvk_shader("vignette.frag.spv").c_str(), _vk_device, &frag_shader)) {
                 cout << "error when loading vignette frag shader" << endl;
             }
 
@@ -2292,10 +2301,10 @@ namespace gvk {
             vkCreatePipelineLayout(_vk_device, &layout_info, nullptr, &_gb_pipeline_layout);
 
             VkShaderModule vert_shader, frag_shader;
-            if (!load_shader_module("../shaders/fullscreen_triangle.vert.spv", _vk_device, &vert_shader)) {
+            if (!load_shader_module(gvk_shader("fullscreen_triangle.vert.spv").c_str(), _vk_device, &vert_shader)) {
                 cout << "error when loading guassian blur vert (aka fullscreen triangle) shader" << endl;
             }
-            if (!load_shader_module("../shaders/gaussian_blur.frag.spv", _vk_device, &frag_shader)) {
+            if (!load_shader_module(gvk_shader("gaussian_blur.frag.spv").c_str(), _vk_device, &frag_shader)) {
                 cout << "error when loading gaussian blur frag shader" << endl;
             }
 
@@ -2464,10 +2473,10 @@ namespace gvk {
             vkCreatePipelineLayout(_vk_device, &layout_info, nullptr, &_bb_pipeline_layout);
 
             VkShaderModule vert_shader, frag_shader;
-            if (!load_shader_module("../shaders/fullscreen_triangle.vert.spv", _vk_device, &vert_shader)) {
+            if (!load_shader_module(gvk_shader("fullscreen_triangle.vert.spv").c_str(), _vk_device, &vert_shader)) {
                 cout << "error when loading box blur vert (aka fullscreen triangle) shader" << endl;
             }
-            if (!load_shader_module("../shaders/box_blur.frag.spv", _vk_device, &frag_shader)) {
+            if (!load_shader_module(gvk_shader("box_blur.frag.spv").c_str(), _vk_device, &frag_shader)) {
                 cout << "error when loading box blur frag shader" << endl;
             }
 
@@ -2639,10 +2648,10 @@ namespace gvk {
             vkCreatePipelineLayout(_vk_device, &layout_info, nullptr, &_bloom_pipeline_layout);
 
             VkShaderModule vert_shader, frag_shader;
-            if (!load_shader_module("../shaders/fullscreen_triangle.vert.spv", _vk_device, &vert_shader)) {
+            if (!load_shader_module(gvk_shader("fullscreen_triangle.vert.spv").c_str(), _vk_device, &vert_shader)) {
                 cout << "error when loading bloom vert (aka fullscreen triangle) shader" << endl;
             }
-            if (!load_shader_module("../shaders/bloom_filter.frag.spv", _vk_device, &frag_shader)) {
+            if (!load_shader_module(gvk_shader("bloom_filter.frag.spv").c_str(), _vk_device, &frag_shader)) {
                 cout << "error when loading bloom frag shader" << endl;
             }
 
@@ -2717,10 +2726,10 @@ namespace gvk {
             vkCreatePipelineLayout(_vk_device, &comp_layout_info, nullptr, &_bloom_comp_pipeline_layout);
 
             VkShaderModule comp_vert_shader, comp_frag_shader;
-            if (!load_shader_module("../shaders/fullscreen_triangle.vert.spv", _vk_device, &comp_vert_shader)) {
+            if (!load_shader_module(gvk_shader("fullscreen_triangle.vert.spv").c_str(), _vk_device, &comp_vert_shader)) {
                 cout << "error when loading bloom comp vert (aka fullscreen triangle) shader" << endl;
             }
-            if (!load_shader_module("../shaders/bloom_composite.frag.spv", _vk_device, &comp_frag_shader)) {
+            if (!load_shader_module(gvk_shader("bloom_composite.frag.spv").c_str(), _vk_device, &comp_frag_shader)) {
                 cout << "error when loading bloom comp frag shader" << endl;
             }
 
@@ -2885,10 +2894,10 @@ namespace gvk {
             vkCreatePipelineLayout(_vk_device, &layout_info, nullptr, &_tonemap_pipeline_layout);
 
             VkShaderModule vert, frag;
-            if (!load_shader_module("../shaders/fullscreen_triangle.vert.spv", _vk_device, &vert)) {
+            if (!load_shader_module(gvk_shader("fullscreen_triangle.vert.spv").c_str(), _vk_device, &vert)) {
                 cout << "error when loading tonemap vert (aka fullscreen triangle) shader" << endl;
             }
-            if (!load_shader_module("../shaders/tonemapping.frag.spv", _vk_device, &frag)) {
+            if (!load_shader_module(gvk_shader("tonemapping.frag.spv").c_str(), _vk_device, &frag)) {
                 cout << "error when loading tonemap frag shader" << endl;
             }
 
@@ -2999,10 +3008,10 @@ namespace gvk {
             vkCreatePipelineLayout(_vk_device, &layout_info, nullptr, &_ao_pipeline_layout);
 
             VkShaderModule vert_shader, frag_shader;
-            if (!load_shader_module("../shaders/fullscreen_triangle.vert.spv", _vk_device, &vert_shader)) {
+            if (!load_shader_module(gvk_shader("fullscreen_triangle.vert.spv").c_str(), _vk_device, &vert_shader)) {
                 cout << "error when loading ssao vert (aka fullscreen triangle) shader" << endl;
             }
-            if (!load_shader_module("../shaders/ssao.frag.spv", _vk_device, &frag_shader)) {
+            if (!load_shader_module(gvk_shader("ssao.frag.spv").c_str(), _vk_device, &frag_shader)) {
                 cout << "error when loading ssao frag shader" << endl;
             }
 
@@ -3083,10 +3092,10 @@ namespace gvk {
             vkCreatePipelineLayout(_vk_device, &comp_layout_info, nullptr, &_ao_comp_pipeline_layout);
 
             VkShaderModule comp_vert_shader, comp_frag_shader;
-            if (!load_shader_module("../shaders/fullscreen_triangle.vert.spv", _vk_device, &comp_vert_shader)) {
+            if (!load_shader_module(gvk_shader("fullscreen_triangle.vert.spv").c_str(), _vk_device, &comp_vert_shader)) {
                 cout << "error when loading ao comp vert (aka fullscreen triangle) shader" << endl;
             }
-            if (!load_shader_module("../shaders/ao_composite.frag.spv", _vk_device, &comp_frag_shader)) {
+            if (!load_shader_module(gvk_shader("ao_composite.frag.spv").c_str(), _vk_device, &comp_frag_shader)) {
                 cout << "error when loading ao comp frag shader" << endl;
             }
 
@@ -3470,10 +3479,10 @@ namespace gvk {
         vkCreatePipelineLayout(_vk_device, &layout_info, nullptr, &skybox.piplayout);
 
         VkShaderModule vert_shader, frag_shader;
-        if (!load_shader_module("../shaders/skybox.vert.spv", _vk_device, &vert_shader)) {
+        if (!load_shader_module(gvk_shader("skybox.vert.spv").c_str(), _vk_device, &vert_shader)) {
             cout << "error when loading skybox vert shader" << endl;
         }
-        if (!load_shader_module("../shaders/skybox.frag.spv", _vk_device, &frag_shader)) {
+        if (!load_shader_module(gvk_shader("skybox.frag.spv").c_str(), _vk_device, &frag_shader)) {
             cout << "error when loading skybox frag shader" << endl;
         }
 
@@ -3514,10 +3523,10 @@ namespace gvk {
         vkCreatePipelineLayout(_vk_device, &layout_info, nullptr, &_composite_pipeline_layout);
 
         VkShaderModule vert_shader, frag_shader;
-        if (!load_shader_module("../shaders/fullscreen_triangle.vert.spv", _vk_device, &vert_shader)) {
+        if (!load_shader_module(gvk_shader("fullscreen_triangle.vert.spv").c_str(), _vk_device, &vert_shader)) {
             cout << "error when loading composite vert shader" << endl;
         }
-        if (!load_shader_module("../shaders/composite.frag.spv", _vk_device, &frag_shader)) {
+        if (!load_shader_module(gvk_shader("composite.frag.spv").c_str(), _vk_device, &frag_shader)) {
             cout << "error when loading composite frag shader" << endl;
         }
 
@@ -3952,7 +3961,7 @@ namespace gvk {
 
     void init_mesh_pipeline() {
         VkShaderModule triangleFragShader;
-        if (!load_shader_module("../shaders/mesh_frag.frag.spv", _vk_device, &triangleFragShader)) {
+        if (!load_shader_module(gvk_shader("mesh_frag.frag.spv").c_str(), _vk_device, &triangleFragShader)) {
             fmt::println("error when building the mesh fragment shader");
         }
         else {
@@ -3960,7 +3969,7 @@ namespace gvk {
         }
 
         VkShaderModule triangleVertexShader;
-        if (!load_shader_module("../shaders/mesh_vertex.vert.spv", _vk_device, &triangleVertexShader)) {
+        if (!load_shader_module(gvk_shader("mesh_vertex.vert.spv").c_str(), _vk_device, &triangleVertexShader)) {
             fmt::println("error when building the mesh vertex shader module");
         }
         else {
@@ -4015,12 +4024,12 @@ namespace gvk {
 
     void init_skinned_mesh_pipeline() {
         VkShaderModule skinnedFragShader;
-        if (!load_shader_module("../shaders/skinned_mesh_frag.frag.spv", _vk_device, &skinnedFragShader)) {
+        if (!load_shader_module(gvk_shader("skinned_mesh_frag.frag.spv").c_str(), _vk_device, &skinnedFragShader)) {
             fmt::println("error when building the skinned mesh fragment shader");
         }
 
         VkShaderModule skinnedVertexShader;
-        if (!load_shader_module("../shaders/skinned_mesh_vertex.vert.spv", _vk_device, &skinnedVertexShader)) {
+        if (!load_shader_module(gvk_shader("skinned_mesh_vertex.vert.spv").c_str(), _vk_device, &skinnedVertexShader)) {
             fmt::println("error when building the skinned mesh vertex shader module");
         }
 
@@ -4102,61 +4111,63 @@ namespace gvk {
     }
 
     void draw_skybox_pass(VkCommandBuffer cmd) {
-        VkClearValue clear = { .color = { {clear_color.r, clear_color.g, clear_color.b, clear_color.a} } };
-        VkRenderingAttachmentInfo color_attachment = attachment_info(_skybox_draw_image_msaa.image_view, &clear, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-        // this fella right here might cause an issue but just like might, like probably not but if something goes wrong with the depth I'm gonna point my finger right here and call past me very stupid and lazy for reusing this
-        VkRenderingAttachmentInfo depth_attachment = depth_attachment_info(_depth_image_msaa.image_view, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
-        VkRenderingInfo rendering_info = {};
-        rendering_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
-        rendering_info.pNext = nullptr;
-        rendering_info.renderArea = VkRect2D{VkOffset2D{0, 0}, _draw_extent};
-        rendering_info.layerCount = 1;
-        rendering_info.colorAttachmentCount = 1;
-        rendering_info.pColorAttachments = &color_attachment;
-        rendering_info.pDepthAttachment = &depth_attachment;
-        rendering_info.pStencilAttachment = nullptr;
+        if (skybox.cubemap.image.image != VK_NULL_HANDLE) {
+            VkClearValue clear = { .color = { {clear_color.r, clear_color.g, clear_color.b, clear_color.a} } };
+            VkRenderingAttachmentInfo color_attachment = attachment_info(_skybox_draw_image_msaa.image_view, &clear, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+            // this fella right here might cause an issue but just like might, like probably not but if something goes wrong with the depth I'm gonna point my finger right here and call past me very stupid and lazy for reusing this
+            VkRenderingAttachmentInfo depth_attachment = depth_attachment_info(_depth_image_msaa.image_view, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+            VkRenderingInfo rendering_info = {};
+            rendering_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+            rendering_info.pNext = nullptr;
+            rendering_info.renderArea = VkRect2D{VkOffset2D{0, 0}, _draw_extent};
+            rendering_info.layerCount = 1;
+            rendering_info.colorAttachmentCount = 1;
+            rendering_info.pColorAttachments = &color_attachment;
+            rendering_info.pDepthAttachment = &depth_attachment;
+            rendering_info.pStencilAttachment = nullptr;
 
-        vkCmdBeginRendering(cmd, &rendering_info);
-        VkViewport viewport = {};
-        viewport.x = 0;
-        viewport.y = 0;
-        viewport.width = static_cast<float>(_draw_extent.width);
-        viewport.height = static_cast<float>(_draw_extent.height);
-        viewport.minDepth = 0.f;
-        viewport.maxDepth = 1.f;
-        vkCmdSetViewport(cmd, 0, 1, &viewport);
+            vkCmdBeginRendering(cmd, &rendering_info);
+            VkViewport viewport = {};
+            viewport.x = 0;
+            viewport.y = 0;
+            viewport.width = static_cast<float>(_draw_extent.width);
+            viewport.height = static_cast<float>(_draw_extent.height);
+            viewport.minDepth = 0.f;
+            viewport.maxDepth = 1.f;
+            vkCmdSetViewport(cmd, 0, 1, &viewport);
 
-        VkRect2D scissor = {};
-        scissor.offset = {0, 0};
-        scissor.extent = _draw_extent;
-        vkCmdSetScissor(cmd, 0, 1, &scissor);
+            VkRect2D scissor = {};
+            scissor.offset = {0, 0};
+            scissor.extent = _draw_extent;
+            vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skybox.pip);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skybox.pip);
 
-        SkyboxPushConstants push_constants;
-        glm::mat4 projection = glm::perspective(glm::radians(fov), static_cast<float>(_draw_extent.width) / static_cast<float>(_draw_extent.height), 10000.f, 0.1f);
-        projection[1][1] *= -1;
-        glm::mat4 view = glm::lookAt(camera.position, camera.position + camera.direction, glm::vec3{ 0.f, 1.f, 0.f });
-        push_constants.render_matrix = projection*glm::mat4(glm::mat3(view));
+            SkyboxPushConstants push_constants;
+            glm::mat4 projection = glm::perspective(glm::radians(fov), static_cast<float>(_draw_extent.width) / static_cast<float>(_draw_extent.height), 10000.f, 0.1f);
+            projection[1][1] *= -1;
+            glm::mat4 view = glm::lookAt(camera.position, camera.position + camera.direction, glm::vec3{ 0.f, 1.f, 0.f });
+            push_constants.render_matrix = projection*glm::mat4(glm::mat3(view));
 
-        VkDescriptorSet imageSet = get_current_frame()._frame_descriptors.allocate(_vk_device, skybox.desc_layout);
-        {
-            DescriptorWriter writer;
-            writer.write_image(0, skybox.cubemap.image_view, skybox.cubemap.sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            VkDescriptorSet imageSet = get_current_frame()._frame_descriptors.allocate(_vk_device, skybox.desc_layout);
+            {
+                DescriptorWriter writer;
+                writer.write_image(0, skybox.cubemap.image_view, skybox.cubemap.sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 
-            writer.update_set(_vk_device, imageSet);
+                writer.update_set(_vk_device, imageSet);
+            }
+
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skybox.piplayout, 0, 1, &imageSet, 0, nullptr);
+
+            push_constants.vertex_buffer = skybox.mesh_buffers.vertex_buffer_address;
+
+            vkCmdPushConstants(cmd, skybox.piplayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(SkyboxPushConstants), &push_constants);
+            vkCmdBindIndexBuffer(cmd, skybox.mesh_buffers.index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
+
+            vkCmdDrawIndexed(cmd, 36, 1, 0, 0, 0);
+
+            vkCmdEndRendering(cmd);
         }
-
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, skybox.piplayout, 0, 1, &imageSet, 0, nullptr);
-
-        push_constants.vertex_buffer = skybox.mesh_buffers.vertex_buffer_address;
-
-        vkCmdPushConstants(cmd, skybox.piplayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(SkyboxPushConstants), &push_constants);
-        vkCmdBindIndexBuffer(cmd, skybox.mesh_buffers.index_buffer.buffer, 0, VK_INDEX_TYPE_UINT32);
-
-        vkCmdDrawIndexed(cmd, 36, 1, 0, 0, 0);
-
-        vkCmdEndRendering(cmd);
     }
 
     void draw_geometry(VkCommandBuffer cmd) {
@@ -4613,83 +4624,125 @@ namespace gvk {
     optional<vector<shared_ptr<MeshAsset>>> load_gltf_meshes(filesystem::path path)
     {
         fmt::println("loading GLTF: {}", path.string());
-
-        tinygltf::TinyGLTF loader;
-        tinygltf::Model model;
-        string err, warn;
-
-        bool ok = (path.extension() == ".glb") ? loader.LoadBinaryFromFile(&model, &err, &warn, path.string()) : loader.LoadASCIIFromFile (&model, &err, &warn, path.string());
-
-        if (!warn.empty()) fmt::println("GLTF warning: {}", warn);
-        if (!err.empty())  fmt::println("GLTF error: {}",   err);
-        if (!ok) {
+        tg3_model model{};
+        tg3_error_stack errors{};
+        tg3_parse_options opts{};
+        tg3_parse_options_init(&opts);
+        tg3_error_stack_init(&errors);
+        string path_str = path.string();
+        tg3_error_code err = tg3_parse_file(&model, &errors, path_str.c_str(), (uint32_t)path_str.size(), &opts);
+        for (uint32_t i = 0; i < errors.count; i++) {
+            const tg3_error_entry* e = &errors.entries[i];
+            if (e->severity == TG3_SEVERITY_WARNING)
+                fmt::println("GLTF warning: {}", e->message ? e->message : "");
+            else if (e->severity == TG3_SEVERITY_ERROR)
+                fmt::println("GLTF error: {}", e->message ? e->message : "");
+        }
+        if (err != TG3_OK) {
             fmt::println("failed to load GLTF: {}", path.string());
+            tg3_error_stack_free(&errors);
+            tg3_model_free(&model);
             return {};
         }
-
-        auto data_ptr = [&](const tinygltf::Accessor& acc) -> const uint8_t* {
-            const auto& bv  = model.bufferViews[acc.bufferView];
+        auto component_size = [](int32_t ct) -> size_t {
+            switch (ct) {
+                case TG3_COMPONENT_TYPE_BYTE:
+                case TG3_COMPONENT_TYPE_UNSIGNED_BYTE: return 1;
+                case TG3_COMPONENT_TYPE_SHORT:
+                case TG3_COMPONENT_TYPE_UNSIGNED_SHORT: return 2;
+                case TG3_COMPONENT_TYPE_INT:
+                case TG3_COMPONENT_TYPE_UNSIGNED_INT: return 4;
+                case TG3_COMPONENT_TYPE_FLOAT: return 4;
+                case TG3_COMPONENT_TYPE_DOUBLE: return 8;
+                default: return 0;
+            }
+        };
+        auto num_components = [](int32_t t) -> size_t {
+            switch (t) {
+                case TG3_TYPE_SCALAR: return 1;
+                case TG3_TYPE_VEC2: return 2;
+                case TG3_TYPE_VEC3: return 3;
+                case TG3_TYPE_VEC4: return 4;
+                case TG3_TYPE_MAT2: return 4;
+                case TG3_TYPE_MAT3: return 9;
+                case TG3_TYPE_MAT4: return 16;
+                default: return 0;
+            }
+        };
+        auto data_ptr = [&](const tg3_accessor& acc) -> const uint8_t* {
+            if (acc.buffer_view < 0) return nullptr;
+            const auto& bv = model.buffer_views[acc.buffer_view];
             const auto& buf = model.buffers[bv.buffer];
-            return buf.data.data() + bv.byteOffset + acc.byteOffset;
+            return buf.data.data + bv.byte_offset + acc.byte_offset;
         };
-
-        auto stride_of = [&](const tinygltf::Accessor& acc) -> size_t {
-            const auto& bv = model.bufferViews[acc.bufferView];
-            if (bv.byteStride != 0) return bv.byteStride;
-            return tinygltf::GetComponentSizeInBytes(acc.componentType) * tinygltf::GetNumComponentsInType(acc.type);
+        auto stride_of = [&](const tg3_accessor& acc) -> size_t {
+            if (acc.buffer_view < 0) return 0;
+            const auto& bv = model.buffer_views[acc.buffer_view];
+            if (bv.byte_stride != 0) return bv.byte_stride;
+            return component_size(acc.component_type) * num_components(acc.type);
         };
-
+        auto find_attr = [](const tg3_primitive& prim, const char* name) -> int32_t {
+            for (uint32_t i = 0; i < prim.attributes_count; i++) {
+                const auto& p = prim.attributes[i];
+                if (p.key.len == strlen(name) && memcmp(p.key.data, name, p.key.len) == 0)
+                    return p.value;
+            }
+            return -1;
+        };
         vector<shared_ptr<MeshAsset>> meshes;
-
         vector<uint32_t> indices;
         vector<Vertex> vertices;
-
-        for (const tinygltf::Mesh& mesh : model.meshes) {
+        for (uint32_t mi = 0; mi < model.meshes_count; mi++) {
+            const tg3_mesh& mesh = model.meshes[mi];
             MeshAsset new_mesh;
-            new_mesh.name = mesh.name;
+            new_mesh.name = mesh.name.data ? string(mesh.name.data, mesh.name.len) : "";
             indices.clear();
             vertices.clear();
-
-            for (const tinygltf::Primitive& prim : mesh.primitives) {
+            for (uint32_t pi = 0; pi < mesh.primitives_count; pi++) {
+                const tg3_primitive& prim = mesh.primitives[pi];
                 GeoSurface new_surface;
                 new_surface.start_index = static_cast<uint32_t>(indices.size());
                 const size_t initial_vtx = vertices.size();
-
-                // INDEX BUFFER
                 {
-                    const tinygltf::Accessor& acc = model.accessors[prim.indices];
+                    if (prim.indices < 0) {
+                        fmt::println("GLTF: primitive missing indices");
+                        tg3_error_stack_free(&errors);
+                        tg3_model_free(&model);
+                        return {};
+                    }
+                    const tg3_accessor& acc = model.accessors[prim.indices];
                     new_surface.count = static_cast<uint32_t>(acc.count);
                     indices.reserve(indices.size() + acc.count);
                     const uint8_t* idx_data = data_ptr(acc);
-
-                    switch (acc.componentType) {
-                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+                    switch (acc.component_type) {
+                        case TG3_COMPONENT_TYPE_UNSIGNED_BYTE:
                             for (size_t i = 0; i < acc.count; i++) indices.push_back(idx_data[i] + (uint32_t)initial_vtx);
                             break;
-                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+                        case TG3_COMPONENT_TYPE_UNSIGNED_SHORT:
                             for (size_t i = 0; i < acc.count; i++) indices.push_back(reinterpret_cast<const uint16_t*>(idx_data)[i] + (uint32_t)initial_vtx);
                             break;
-                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
+                        case TG3_COMPONENT_TYPE_UNSIGNED_INT:
                             for (size_t i = 0; i < acc.count; i++) indices.push_back(reinterpret_cast<const uint32_t*>(idx_data)[i] + (uint32_t)initial_vtx);
                             break;
                         default:
-                            fmt::println("GLTF: unsupported index component type {}", acc.componentType);
+                            fmt::println("GLTF: unsupported index component type {}", acc.component_type);
+                            tg3_error_stack_free(&errors);
+                            tg3_model_free(&model);
                             return {};
                     }
                 }
-
-                // POSITION
                 {
-                    auto it = prim.attributes.find("POSITION");
-                    if (it == prim.attributes.end()) {
+                    int32_t pos_idx = find_attr(prim, "POSITION");
+                    if (pos_idx < 0) {
                         fmt::println("GLTF: primitive missing POSITION attribute");
+                        tg3_error_stack_free(&errors);
+                        tg3_model_free(&model);
                         return {};
                     }
-                    const tinygltf::Accessor& acc = model.accessors[it->second];
+                    const tg3_accessor& acc = model.accessors[pos_idx];
                     const size_t s = stride_of(acc);
                     const uint8_t* ptr = data_ptr(acc);
                     vertices.resize(initial_vtx + acc.count);
-
                     for (size_t i = 0; i < acc.count; i++) {
                         Vertex vtx{};
                         vtx.position = *reinterpret_cast<const glm::vec3*>(ptr + i * s);
@@ -4700,23 +4753,19 @@ namespace gvk {
                         vertices[initial_vtx + i] = vtx;
                     }
                 }
-
-                // NORMAL
                 {
-                    auto it = prim.attributes.find("NORMAL");
-                    if (it != prim.attributes.end()) {
-                        const tinygltf::Accessor& acc = model.accessors[it->second];
+                    int32_t nrm_idx = find_attr(prim, "NORMAL");
+                    if (nrm_idx >= 0) {
+                        const tg3_accessor& acc = model.accessors[nrm_idx];
                         const size_t s = stride_of(acc);
                         const uint8_t* ptr = data_ptr(acc);
                         for (size_t i = 0; i < acc.count; i++) vertices[initial_vtx + i].normal = *reinterpret_cast<const glm::vec3*>(ptr + i * s);
                     }
                 }
-
-                // TEXCOORD_0
                 {
-                    auto it = prim.attributes.find("TEXCOORD_0");
-                    if (it != prim.attributes.end()) {
-                        const tinygltf::Accessor& acc = model.accessors[it->second];
+                    int32_t uv_idx = find_attr(prim, "TEXCOORD_0");
+                    if (uv_idx >= 0) {
+                        const tg3_accessor& acc = model.accessors[uv_idx];
                         const size_t s = stride_of(acc);
                         const uint8_t* ptr = data_ptr(acc);
                         for (size_t i = 0; i < acc.count; i++) {
@@ -4726,12 +4775,10 @@ namespace gvk {
                         }
                     }
                 }
-
-                // TANGENT
                 {
-                    auto it = prim.attributes.find("TANGENT");
-                    if (it != prim.attributes.end()) {
-                        const tinygltf::Accessor& acc = model.accessors[it->second];
+                    int32_t tan_idx = find_attr(prim, "TANGENT");
+                    if (tan_idx >= 0) {
+                        const tg3_accessor& acc = model.accessors[tan_idx];
                         const size_t s = stride_of(acc);
                         const uint8_t* ptr = data_ptr(acc);
                         for (size_t i = 0; i < acc.count; i++) {
@@ -4739,12 +4786,9 @@ namespace gvk {
                         }
                     }
                 }
-
                 new_mesh.surfaces.push_back(new_surface);
             }
-
             calculate_AABB(new_mesh.AABB_min, new_mesh.AABB_max, vertices);
-
             new_mesh.mesh_buffers = upload_mesh(indices, vertices);
             _main_deletion_queue.push_function([buffers = new_mesh.mesh_buffers]() {
                 destroy_buffer(buffers.vertex_buffer);
@@ -4752,7 +4796,8 @@ namespace gvk {
             });
             meshes.emplace_back(make_shared<MeshAsset>(move(new_mesh)));
         }
-
+        tg3_error_stack_free(&errors);
+        tg3_model_free(&model);
         return meshes;
     }
 
@@ -4773,116 +4818,156 @@ namespace gvk {
 
     optional<GLTFReturns> load_gltf_scene(filesystem::path path) {
         fmt::println("loading GLTF: {}", path.string());
-        tinygltf::TinyGLTF loader;
-        tinygltf::Model model;
-        string err, warn;
-        bool ok = (path.extension() == ".glb") ? loader.LoadBinaryFromFile(&model, &err, &warn, path.string()) : loader.LoadASCIIFromFile(&model, &err, &warn, path.string());
-        if (!warn.empty()) fmt::println("GLTF warning: {}", warn);
-        if (!err.empty()) fmt::println("GLTF error: {}", err);
-        if (!ok) {
-            fmt::println("failed to load GLTF: {}", path.string());
+        tg3_model model{};
+        tg3_error_stack errors{};
+        tg3_parse_options opts{};
+        tg3_parse_options_init(&opts);
+        tg3_error_stack_init(&errors);
+        string path_str = path.string();
+        tg3_error_code err = tg3_parse_file(&model, &errors, path_str.c_str(), (uint32_t)path_str.size(), &opts);
+        for (uint32_t i = 0; i < errors.count; i++) {
+            const tg3_error_entry* e = &errors.entries[i];
+            if (e->severity == TG3_SEVERITY_WARNING)
+                fmt::println("GLTF warning: {}", e->message ? e->message : "");
+            else if (e->severity == TG3_SEVERITY_ERROR)
+                fmt::println("GLTF error: {}", e->message ? e->message : "");
         }
-        auto data_ptr = [&](const tinygltf::Accessor& acc) -> const uint8_t* {
-            const auto& bv = model.bufferViews[acc.bufferView];
+        if (err != TG3_OK) {
+            fmt::println("failed to load GLTF: {}", path.string());
+            tg3_error_stack_free(&errors);
+            tg3_model_free(&model);
+            return {};
+        }
+        auto component_size = [](int32_t ct) -> size_t {
+            switch (ct) {
+                case TG3_COMPONENT_TYPE_BYTE:
+                case TG3_COMPONENT_TYPE_UNSIGNED_BYTE: return 1;
+                case TG3_COMPONENT_TYPE_SHORT:
+                case TG3_COMPONENT_TYPE_UNSIGNED_SHORT: return 2;
+                case TG3_COMPONENT_TYPE_INT:
+                case TG3_COMPONENT_TYPE_UNSIGNED_INT: return 4;
+                case TG3_COMPONENT_TYPE_FLOAT: return 4;
+                case TG3_COMPONENT_TYPE_DOUBLE: return 8;
+                default: return 0;
+            }
+        };
+        auto num_components = [](int32_t t) -> size_t {
+            switch (t) {
+                case TG3_TYPE_SCALAR: return 1;
+                case TG3_TYPE_VEC2: return 2;
+                case TG3_TYPE_VEC3: return 3;
+                case TG3_TYPE_VEC4: return 4;
+                case TG3_TYPE_MAT2: return 4;
+                case TG3_TYPE_MAT3: return 9;
+                case TG3_TYPE_MAT4: return 16;
+                default: return 0;
+            }
+        };
+        auto data_ptr = [&](const tg3_accessor& acc) -> const uint8_t* {
+            if (acc.buffer_view < 0) return nullptr;
+            const auto& bv = model.buffer_views[acc.buffer_view];
             const auto& buf = model.buffers[bv.buffer];
-            return buf.data.data() + bv.byteOffset + acc.byteOffset;
+            return buf.data.data + bv.byte_offset + acc.byte_offset;
         };
-        auto stride_of = [&](const tinygltf::Accessor& acc) -> size_t {
-            const auto& bv = model.bufferViews[acc.bufferView];
-            if (bv.byteStride != 0) return bv.byteStride;
-            return tinygltf::GetComponentSizeInBytes(acc.componentType) * tinygltf::GetNumComponentsInType(acc.type);
+        auto stride_of = [&](const tg3_accessor& acc) -> size_t {
+            if (acc.buffer_view < 0) return 0;
+            const auto& bv = model.buffer_views[acc.buffer_view];
+            if (bv.byte_stride != 0) return bv.byte_stride;
+            return component_size(acc.component_type) * num_components(acc.type);
         };
-
+        auto find_attr = [](const tg3_primitive& prim, const char* name) -> int32_t {
+            for (uint32_t i = 0; i < prim.attributes_count; i++) {
+                const auto& p = prim.attributes[i];
+                if (p.key.len == strlen(name) && memcmp(p.key.data, name, p.key.len) == 0)
+                    return p.value;
+            }
+            return -1;
+        };
         GLTFReturns result;
         result.dir_light = DirectionalLight{};
         vector<shared_ptr<MeshAsset>> loaded_meshes;
-
         vector<Material> materials;
-        materials.resize(model.materials.size());
-
+        materials.resize(model.materials_count);
         auto load_texture = [&](int tex_index, AllocatedImage fallback) -> AllocatedImage {
-            if (tex_index < 0 || tex_index >= (int)model.textures.size()) return fallback;
+            if (tex_index < 0 || tex_index >= (int)model.textures_count) return fallback;
             const auto& tex = model.textures[tex_index];
-            if (tex.source < 0 || tex.source >= (int)model.images.size()) return fallback;
+            if (tex.source < 0 || tex.source >= (int)model.images_count) return fallback;
             const auto& img = model.images[tex.source];
-            if (img.image.empty()) return fallback;
+            if (img.image.count == 0) return fallback;
             VkExtent3D extent = { (uint32_t)img.width, (uint32_t)img.height, 1 };
-            AllocatedImage tex_image = create_image((void*)img.image.data(), extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_SAMPLED_BIT);
+            AllocatedImage tex_image = create_image((void*)img.image.data, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_SAMPLED_BIT);
             _main_deletion_queue.push_function([tex_image]() {
                 destroy_image(tex_image);
             });
             return tex_image;
         };
-
-        for (size_t mi = 0; mi < model.materials.size(); mi++) {
+        for (uint32_t mi = 0; mi < model.materials_count; mi++) {
             const auto& mat = model.materials[mi];
             float scalar_tint = 1.f;
             float roughness = 1.f;
             float metallic = 0.f;
-            if (mat.pbrMetallicRoughness.baseColorFactor.size() >= 3) {
-                scalar_tint = (float)mat.pbrMetallicRoughness.baseColorFactor[0];
-            }
-            if (mat.pbrMetallicRoughness.roughnessFactor >= 0.0) {
-                roughness = (float)mat.pbrMetallicRoughness.roughnessFactor;
-            }
-            if (mat.pbrMetallicRoughness.metallicFactor >= 0.0) {
-                metallic = (float)mat.pbrMetallicRoughness.metallicFactor;
-            }
-
-            AllocatedImage albedo = load_texture(mat.pbrMetallicRoughness.baseColorTexture.index, _white_image);
-            AllocatedImage normal = load_texture(mat.normalTexture.index, _normal_image);
-            AllocatedImage roughness_map = load_texture(mat.pbrMetallicRoughness.metallicRoughnessTexture.index, _white_image);
-            AllocatedImage metallic_map = load_texture(mat.pbrMetallicRoughness.metallicRoughnessTexture.index, _black_image);
-            AllocatedImage emissive = load_texture(mat.emissiveTexture.index, _black_image);
-            AllocatedImage ao = load_texture(mat.occlusionTexture.index, _white_image);
-
+            scalar_tint = (float)mat.pbr_metallic_roughness.base_color_factor[0];
+            roughness = (float)mat.pbr_metallic_roughness.roughness_factor;
+            metallic = (float)mat.pbr_metallic_roughness.metallic_factor;
+            AllocatedImage albedo = load_texture(mat.pbr_metallic_roughness.base_color_texture.index, _white_image);
+            AllocatedImage normal = load_texture(mat.normal_texture.index, _normal_image);
+            AllocatedImage roughness_map = load_texture(mat.pbr_metallic_roughness.metallic_roughness_texture.index, _white_image);
+            AllocatedImage metallic_map = load_texture(mat.pbr_metallic_roughness.metallic_roughness_texture.index, _black_image);
+            AllocatedImage emissive = load_texture(mat.emissive_texture.index, _black_image);
+            AllocatedImage ao = load_texture(mat.occlusion_texture.index, _white_image);
             materials[mi] = create_material(albedo, normal, roughness_map, metallic_map, emissive, ao, scalar_tint, roughness, metallic);
         }
-
-        for (const tinygltf::Mesh& mesh : model.meshes) {
+        for (uint32_t mi = 0; mi < model.meshes_count; mi++) {
+            const tg3_mesh& mesh = model.meshes[mi];
             MeshAsset new_mesh;
-            new_mesh.name = mesh.name;
+            new_mesh.name = mesh.name.data ? string(mesh.name.data, mesh.name.len) : "";
             vector<uint32_t> indices;
             vector<Vertex> vertices;
-
-            for (const tinygltf::Primitive& prim : mesh.primitives) {
+            for (uint32_t pi = 0; pi < mesh.primitives_count; pi++) {
+                const tg3_primitive& prim = mesh.primitives[pi];
                 GeoSurface new_surface;
                 new_surface.start_index = static_cast<uint32_t>(indices.size());
-
                 const size_t initial_vtx = vertices.size();
                 {
-                    const tinygltf::Accessor& acc = model.accessors[prim.indices];
+                    if (prim.indices < 0) {
+                        fmt::println("GLTF: primitive missing indices");
+                        tg3_error_stack_free(&errors);
+                        tg3_model_free(&model);
+                        return {};
+                    }
+                    const tg3_accessor& acc = model.accessors[prim.indices];
                     new_surface.count = static_cast<uint32_t>(acc.count);
                     indices.reserve(indices.size() + acc.count);
                     const uint8_t* idx_data = data_ptr(acc);
-
-                    switch (acc.componentType) {
-                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+                    switch (acc.component_type) {
+                        case TG3_COMPONENT_TYPE_UNSIGNED_BYTE:
                             for (size_t i = 0; i < acc.count; i++) indices.push_back(idx_data[i] + (uint32_t)initial_vtx);
                             break;
-                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+                        case TG3_COMPONENT_TYPE_UNSIGNED_SHORT:
                             for (size_t i = 0; i < acc.count; i++) indices.push_back(reinterpret_cast<const uint16_t*>(idx_data)[i] + (uint32_t)initial_vtx);
                             break;
-                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
+                        case TG3_COMPONENT_TYPE_UNSIGNED_INT:
                             for (size_t i = 0; i < acc.count; i++) indices.push_back(reinterpret_cast<const uint32_t*>(idx_data)[i] + (uint32_t)initial_vtx);
                             break;
                         default:
-                            fmt::println("GLTF: unsupported index component type {}", acc.componentType);
+                            fmt::println("GLTF: unsupported index component type {}", acc.component_type);
+                            tg3_error_stack_free(&errors);
+                            tg3_model_free(&model);
                             return {};
                     }
                 }
                 {
-                    auto it = prim.attributes.find("POSITION");
-                    if (it == prim.attributes.end()) {
+                    int32_t pos_idx = find_attr(prim, "POSITION");
+                    if (pos_idx < 0) {
                         fmt::println("GLTF: primitive missing POSITION attribute");
+                        tg3_error_stack_free(&errors);
+                        tg3_model_free(&model);
                         return {};
                     }
-
-                    const tinygltf::Accessor& acc = model.accessors[it->second];
+                    const tg3_accessor& acc = model.accessors[pos_idx];
                     const size_t s = stride_of(acc);
                     const uint8_t* ptr = data_ptr(acc);
                     vertices.resize(initial_vtx + acc.count);
-
                     for (size_t i = 0; i < acc.count; i++) {
                         Vertex vtx{};
                         vtx.position = *reinterpret_cast<const glm::vec3*>(ptr + i * s);
@@ -4894,18 +4979,18 @@ namespace gvk {
                     }
                 }
                 {
-                    auto it = prim.attributes.find("NORMAL");
-                    if (it != prim.attributes.end()) {
-                        const tinygltf::Accessor& acc = model.accessors[it->second];
+                    int32_t nrm_idx = find_attr(prim, "NORMAL");
+                    if (nrm_idx >= 0) {
+                        const tg3_accessor& acc = model.accessors[nrm_idx];
                         const size_t s = stride_of(acc);
                         const uint8_t* ptr = data_ptr(acc);
                         for (size_t i = 0; i < acc.count; i++) vertices[initial_vtx + i].normal = *reinterpret_cast<const glm::vec3*>(ptr + i * s);
                     }
                 }
                 {
-                    auto it = prim.attributes.find("TEXCOORD_0");
-                    if (it != prim.attributes.end()) {
-                        const tinygltf::Accessor& acc = model.accessors[it->second];
+                    int32_t uv_idx = find_attr(prim, "TEXCOORD_0");
+                    if (uv_idx >= 0) {
+                        const tg3_accessor& acc = model.accessors[uv_idx];
                         const size_t s = stride_of(acc);
                         const uint8_t* ptr = data_ptr(acc);
                         for (size_t i = 0; i < acc.count; i++) {
@@ -4916,9 +5001,9 @@ namespace gvk {
                     }
                 }
                 {
-                    auto it = prim.attributes.find("TANGENT");
-                    if (it != prim.attributes.end()) {
-                        const tinygltf::Accessor& acc = model.accessors[it->second];
+                    int32_t tan_idx = find_attr(prim, "TANGENT");
+                    if (tan_idx >= 0) {
+                        const tg3_accessor& acc = model.accessors[tan_idx];
                         const size_t s = stride_of(acc);
                         const uint8_t* ptr = data_ptr(acc);
                         for (size_t i = 0; i < acc.count; i++) {
@@ -4929,7 +5014,6 @@ namespace gvk {
                 new_mesh.surfaces.push_back(new_surface);
             }
             calculate_AABB(new_mesh.AABB_min, new_mesh.AABB_max, vertices);
-
             new_mesh.mesh_buffers = upload_mesh(indices, vertices);
             _main_deletion_queue.push_function([buffers = new_mesh.mesh_buffers]() {
                 destroy_buffer(buffers.vertex_buffer);
@@ -4937,53 +5021,39 @@ namespace gvk {
             });
             loaded_meshes.emplace_back(make_shared<MeshAsset>(move(new_mesh)));
         }
-
-        auto get_node_matrix = [](const tinygltf::Node& node) -> glm::mat4 {
-            if (node.matrix.size() == 16) {
+        auto get_node_matrix = [](const tg3_node& node) -> glm::mat4 {
+            if (node.has_matrix) {
                 glm::mat4 m(1.f);
                 for (int i = 0; i < 16; i++) m[i / 4][i % 4] = (float)node.matrix[i];
                 return m;
             }
             glm::mat4 t(1.f), r(1.f), s(1.f);
-            if (node.translation.size() == 3) {
-                t = glm::translate(glm::mat4(1.f), glm::vec3((float)node.translation[0], (float)node.translation[1], (float)node.translation[2]));
-            }
-            if (node.rotation.size() == 4) {
-                glm::quat q((float)node.rotation[3], (float)node.rotation[0], (float)node.rotation[1], (float)node.rotation[2]);
-                r = glm::mat4_cast(q);
-            }
-            if (node.scale.size() == 3) {
-                s = glm::scale(glm::mat4(1.f), glm::vec3((float)node.scale[0], (float)node.scale[1], (float)node.scale[2]));
-            }
+            t = glm::translate(glm::mat4(1.f), glm::vec3((float)node.translation[0], (float)node.translation[1], (float)node.translation[2]));
+            glm::quat q((float)node.rotation[3], (float)node.rotation[0], (float)node.rotation[1], (float)node.rotation[2]);
+            r = glm::mat4_cast(q);
+            s = glm::scale(glm::mat4(1.f), glm::vec3((float)node.scale[0], (float)node.scale[1], (float)node.scale[2]));
             return t * r * s;
         };
-
         function<void(int, glm::mat4)> process_node = [&](int node_idx, glm::mat4 parent) {
-            if (node_idx < 0 || node_idx >= (int)model.nodes.size()) return;
-            const tinygltf::Node& node = model.nodes[node_idx];
+            if (node_idx < 0 || node_idx >= (int)model.nodes_count) return;
+            const tg3_node& node = model.nodes[node_idx];
             glm::mat4 local = get_node_matrix(node);
             glm::mat4 world = parent * local;
-
             glm::vec3 world_pos = glm::vec3(world[3]);
-
             glm::vec3 world_scale;
             world_scale.x = glm::length(glm::vec3(world[0]));
             world_scale.y = glm::length(glm::vec3(world[1]));
             world_scale.z = glm::length(glm::vec3(world[2]));
-
             glm::mat3 rotm;
             rotm[0] = glm::vec3(world[0]) / world_scale.x;
             rotm[1] = glm::vec3(world[1]) / world_scale.y;
             rotm[2] = glm::vec3(world[2]) / world_scale.z;
             glm::quat world_rot = glm::quat_cast(rotm);
-
             if (node.mesh >= 0 && node.mesh < (int)loaded_meshes.size()) {
                 GLTFReturnMesh rm;
                 rm.mesh = *loaded_meshes[node.mesh];
-
-                if (node.mesh < (int)model.meshes.size() && !model.meshes[node.mesh].primitives.empty()) {
+                if (node.mesh < (int)model.meshes_count && model.meshes[node.mesh].primitives_count > 0) {
                     int mat_idx = model.meshes[node.mesh].primitives[0].material;
-
                     if (mat_idx >= 0 && mat_idx < (int)materials.size()) {
                         rm.material = materials[mat_idx];
                     } else {
@@ -4992,94 +5062,82 @@ namespace gvk {
                 } else {
                     rm.material = create_material(_white_image, _white_image, _white_image, _black_image, _black_image, _white_image);
                 }
-
                 rm.position = world_pos;
                 rm.scale = world_scale;
                 rm.rot = world_rot;
                 result.meshes.push_back(move(rm));
             }
-
-            if (node.extensions.count("KHR_lights_punctual")) {
-                const auto& ext = node.extensions.at("KHR_lights_punctual");
-
-                if (ext.Has("light")) {
-                    int light_idx = ext.Get("light").GetNumberAsInt();
-
-                    if (light_idx >= 0 && light_idx < (int)model.lights.size()) {
-                        const auto& light = model.lights[light_idx];
-                        glm::vec3 col{1.f, 1.f, 1.f};
-                        if (light.color.size() >= 3) {
-                            col = glm::vec3((float)light.color[0], (float)light.color[1], (float)light.color[2]);
-                        }
-
-                        float intensity = static_cast<float>(light.intensity);
-                        if (light.type == "directional") {
-                            result.dir_light.direction = world_rot * glm::vec3(0.f, 0.f, -1.f);
-                            result.dir_light.color = col;
-                            result.dir_light.intensity = intensity;
-                        } else if (light.type == "point") {
-                            PointLight pl;
-                            pl.position = world_pos;
-                            pl.color = col;
-                            pl.intensity = intensity;
-                            pl.range = light.range > 0.0 ? (float)light.range : 10.f;
-                            result.point_lights.push_back(pl);
-                        } else if (light.type == "spot") {
-                            SpotLight sl;
-                            sl.position = world_pos;
-                            sl.direction = world_rot * glm::vec3(0.f, 0.f, -1.f);
-                            sl.color = col;
-                            sl.intensity = intensity;
-                            sl.range = light.range > 0.0 ? (float)light.range : 10.f;
-                            result.spot_lights.push_back(sl);
-                        }
-                    }
+            if (node.light >= 0 && node.light < (int)model.lights_count) {
+                const auto& light = model.lights[node.light];
+                glm::vec3 col{(float)light.color[0], (float)light.color[1], (float)light.color[2]};
+                float intensity = static_cast<float>(light.intensity);
+                string light_type = light.type.data ? string(light.type.data, light.type.len) : "";
+                if (light_type == "directional") {
+                    result.dir_light.direction = world_rot * glm::vec3(0.f, 0.f, -1.f);
+                    result.dir_light.color = col;
+                    result.dir_light.intensity = intensity;
+                } else if (light_type == "point") {
+                    PointLight pl;
+                    pl.position = world_pos;
+                    pl.color = col;
+                    pl.intensity = intensity;
+                    pl.range = light.range > 0.0 ? (float)light.range : 10.f;
+                    result.point_lights.push_back(pl);
+                } else if (light_type == "spot") {
+                    SpotLight sl;
+                    sl.position = world_pos;
+                    sl.direction = world_rot * glm::vec3(0.f, 0.f, -1.f);
+                    sl.color = col;
+                    sl.intensity = intensity;
+                    sl.range = light.range > 0.0 ? (float)light.range : 10.f;
+                    result.spot_lights.push_back(sl);
                 }
             }
-
-            for (int child : node.children) {
-                process_node(child, world);
+            for (uint32_t ci = 0; ci < node.children_count; ci++) {
+                process_node(node.children[ci], world);
             }
         };
-
-        if (!model.scenes.empty()) {
-            int scene_idx = model.defaultScene >= 0 ? model.defaultScene : 0;
-            if (scene_idx < (int)model.scenes.size()) {
-                for (int root : model.scenes[scene_idx].nodes) {
-                    process_node(root, glm::mat4(1.f));
+        if (model.scenes_count > 0) {
+            int scene_idx = model.default_scene >= 0 ? model.default_scene : 0;
+            if (scene_idx < (int)model.scenes_count) {
+                const tg3_scene& sc = model.scenes[scene_idx];
+                for (uint32_t ni = 0; ni < sc.nodes_count; ni++) {
+                    process_node(sc.nodes[ni], glm::mat4(1.f));
                 }
             }
         } else {
-            for (size_t i = 0; i < model.nodes.size(); i++) {
+            for (uint32_t i = 0; i < model.nodes_count; i++) {
                 process_node((int)i, glm::mat4(1.f));
             }
         }
-
+        tg3_error_stack_free(&errors);
+        tg3_model_free(&model);
         return result;
     }
 
-    std::vector<Skin> load_gltf_skins(const tinygltf::Model& model) {
+    std::vector<Skin> load_gltf_skins(const tg3_model& model) {
         std::vector<Skin> skins;
-        for (const auto& gltf_skin : model.skins) {
+        for (uint32_t si = 0; si < model.skins_count; si++) {
+            const auto& gltf_skin = model.skins[si];
             Skin skin;
-            skin.joint_count = static_cast<int>(gltf_skin.joints.size());
+            skin.joint_count = static_cast<int>(gltf_skin.joints_count);
             skin.parent_indices.assign(skin.joint_count, -1);
             skin.inverse_bind_matrices.assign(skin.joint_count, glm::mat4(1.0f));
             skin.names.assign(skin.joint_count, "");
             for (int j = 0; j < skin.joint_count; j++) {
-                skin.names[j] = model.nodes[gltf_skin.joints[j]].name;
+                int node_idx = gltf_skin.joints[j];
+                if (node_idx >= 0 && node_idx < (int)model.nodes_count && model.nodes[node_idx].name.data)
+                    skin.names[j] = string(model.nodes[node_idx].name.data, model.nodes[node_idx].name.len);
             }
-
             std::unordered_map<int, int> node_to_joint;
             for (int j = 0; j < skin.joint_count; j++) {
                 node_to_joint[gltf_skin.joints[j]] = j;
             }
-
-            if (gltf_skin.inverseBindMatrices >= 0) {
-                const tinygltf::Accessor& acc = model.accessors[gltf_skin.inverseBindMatrices];
-                const tinygltf::BufferView& bv = model.bufferViews[acc.bufferView];
-                const tinygltf::Buffer& buf = model.buffers[bv.buffer];
-                const float* data = reinterpret_cast<const float*>(buf.data.data() + bv.byteOffset + acc.byteOffset);
+            if (gltf_skin.inverse_bind_matrices >= 0) {
+                const tg3_accessor& acc = model.accessors[gltf_skin.inverse_bind_matrices];
+                const tg3_buffer_view& bv = model.buffer_views[acc.buffer_view];
+                const tg3_buffer& buf = model.buffers[bv.buffer];
+                const float* data = reinterpret_cast<const float*>(buf.data.data + bv.byte_offset + acc.byte_offset);
                 for (int i = 0; i < skin.joint_count; i++) {
                     glm::mat4 m(1.0f);
                     for (int c = 0; c < 16; c++) {
@@ -5088,16 +5146,15 @@ namespace gvk {
                     skin.inverse_bind_matrices[i] = m;
                 }
             }
-
-            std::vector<int> node_parent(model.nodes.size(), -1);
-            for (size_t i = 0; i < model.nodes.size(); i++) {
-                for (int child : model.nodes[i].children) {
-                    if (child >= 0 && child < static_cast<int>(model.nodes.size())) {
+            std::vector<int> node_parent(model.nodes_count, -1);
+            for (uint32_t i = 0; i < model.nodes_count; i++) {
+                for (uint32_t ci = 0; ci < model.nodes[i].children_count; ci++) {
+                    int child = model.nodes[i].children[ci];
+                    if (child >= 0 && child < static_cast<int>(model.nodes_count)) {
                         node_parent[child] = static_cast<int>(i);
                     }
                 }
             }
-
             for (int j = 0; j < skin.joint_count; j++) {
                 int node = gltf_skin.joints[j];
                 int parent_node = node_parent[node];
@@ -5110,50 +5167,45 @@ namespace gvk {
                     parent_node = node_parent[parent_node];
                 }
             }
-
             skins.push_back(std::move(skin));
         }
         return skins;
     }
 
-    std::vector<AnimationClip> load_gltf_animations(const tinygltf::Model& model, const std::vector<Skin>& skins) {
+    std::vector<AnimationClip> load_gltf_animations(const tg3_model& model, const std::vector<Skin>& skins) {
         std::vector<AnimationClip> clips;
         if (skins.empty()) return clips;
-
         const Skin& primary_skin = skins[0];
         std::unordered_map<int, int> node_to_joint;
-        for (size_t s = 0; s < model.skins.size(); s++) {
-            for (size_t j = 0; j < model.skins[s].joints.size(); j++) {
+        for (uint32_t s = 0; s < model.skins_count; s++) {
+            for (uint32_t j = 0; j < model.skins[s].joints_count; j++) {
                 node_to_joint[model.skins[s].joints[j]] = static_cast<int>(j);
             }
         }
-
-        for (const auto& gltf_anim : model.animations) {
+        for (uint32_t ai = 0; ai < model.animations_count; ai++) {
+            const auto& gltf_anim = model.animations[ai];
             AnimationClip clip;
             clip.duration = 0.0f;
             clip.joints.resize(primary_skin.joint_count);
-
-            for (const auto& channel : gltf_anim.channels) {
-                if (channel.target_node < 0) continue;
-                auto joint_it = node_to_joint.find(channel.target_node);
+            for (uint32_t ci = 0; ci < gltf_anim.channels_count; ci++) {
+                const auto& channel = gltf_anim.channels[ci];
+                if (channel.target.node < 0) continue;
+                auto joint_it = node_to_joint.find(channel.target.node);
                 if (joint_it == node_to_joint.end()) continue;
                 int joint = joint_it->second;
                 if (joint < 0 || joint >= primary_skin.joint_count) continue;
-
                 const auto& sampler = gltf_anim.samplers[channel.sampler];
-                const tinygltf::Accessor& in_acc = model.accessors[sampler.input];
-                const tinygltf::Accessor& out_acc = model.accessors[sampler.output];
-                const tinygltf::BufferView& in_bv = model.bufferViews[in_acc.bufferView];
-                const tinygltf::BufferView& out_bv = model.bufferViews[out_acc.bufferView];
-                const tinygltf::Buffer& in_buf = model.buffers[in_bv.buffer];
-                const tinygltf::Buffer& out_buf = model.buffers[out_bv.buffer];
-
-                const float* times = reinterpret_cast<const float*>(in_buf.data.data() + in_bv.byteOffset + in_acc.byteOffset);
-                const float* values = reinterpret_cast<const float*>(out_buf.data.data() + out_bv.byteOffset + out_acc.byteOffset);
-
+                const tg3_accessor& in_acc = model.accessors[sampler.input];
+                const tg3_accessor& out_acc = model.accessors[sampler.output];
+                const tg3_buffer_view& in_bv = model.buffer_views[in_acc.buffer_view];
+                const tg3_buffer_view& out_bv = model.buffer_views[out_acc.buffer_view];
+                const tg3_buffer& in_buf = model.buffers[in_bv.buffer];
+                const tg3_buffer& out_buf = model.buffers[out_bv.buffer];
+                const float* times = reinterpret_cast<const float*>(in_buf.data.data + in_bv.byte_offset + in_acc.byte_offset);
+                const float* values = reinterpret_cast<const float*>(out_buf.data.data + out_bv.byte_offset + out_acc.byte_offset);
                 auto& track = clip.joints[joint];
-
-                if (channel.target_path == "translation") {
+                string path = channel.target.path.data ? string(channel.target.path.data, channel.target.path.len) : "";
+                if (path == "translation") {
                     track.timesT.assign(times, times + in_acc.count);
                     track.translations.reserve(out_acc.count);
                     for (size_t i = 0; i < out_acc.count; i++) {
@@ -5161,7 +5213,7 @@ namespace gvk {
                     }
                     if (!track.timesT.empty()) clip.duration = std::max(clip.duration, track.timesT.back());
                 }
-                else if (channel.target_path == "rotation") {
+                else if (path == "rotation") {
                     track.timesR.assign(times, times + in_acc.count);
                     track.rotations.reserve(out_acc.count);
                     for (size_t i = 0; i < out_acc.count; i++) {
@@ -5169,7 +5221,7 @@ namespace gvk {
                     }
                     if (!track.timesR.empty()) clip.duration = std::max(clip.duration, track.timesR.back());
                 }
-                else if (channel.target_path == "scale") {
+                else if (path == "scale") {
                     track.timesS.assign(times, times + in_acc.count);
                     track.scales.reserve(out_acc.count);
                     for (size_t i = 0; i < out_acc.count; i++) {
@@ -5192,121 +5244,155 @@ namespace gvk {
 
     optional<SkinnedGLTFData> load_gltf_meshes_skinned(filesystem::path path) {
         fmt::println("loading GLTF: {}", path.string());
-
-        tinygltf::TinyGLTF loader;
-        tinygltf::Model model;
-        string err, warn;
-
-        bool ok = (path.extension() == ".glb") ? loader.LoadBinaryFromFile(&model, &err, &warn, path.string()) : loader.LoadASCIIFromFile(&model, &err, &warn, path.string());
-
-        if (!warn.empty()) fmt::println("GLTF warning: {}", warn);
-        if (!err.empty())  fmt::println("GLTF error: {}",   err);
-        if (!ok) {
+        tg3_model model{};
+        tg3_error_stack errors{};
+        tg3_parse_options opts{};
+        tg3_parse_options_init(&opts);
+        tg3_error_stack_init(&errors);
+        string path_str = path.string();
+        tg3_error_code err = tg3_parse_file(&model, &errors, path_str.c_str(), (uint32_t)path_str.size(), &opts);
+        for (uint32_t i = 0; i < errors.count; i++) {
+            const tg3_error_entry* e = &errors.entries[i];
+            if (e->severity == TG3_SEVERITY_WARNING)
+                fmt::println("GLTF warning: {}", e->message ? e->message : "");
+            else if (e->severity == TG3_SEVERITY_ERROR)
+                fmt::println("GLTF error: {}", e->message ? e->message : "");
+        }
+        if (err != TG3_OK) {
             fmt::println("failed to load GLTF: {}", path.string());
+            tg3_error_stack_free(&errors);
+            tg3_model_free(&model);
             return {};
         }
-
-        auto data_ptr = [&](const tinygltf::Accessor& acc) -> const uint8_t* {
-            const auto& bv  = model.bufferViews[acc.bufferView];
+        auto component_size = [](int32_t ct) -> size_t {
+            switch (ct) {
+                case TG3_COMPONENT_TYPE_BYTE:
+                case TG3_COMPONENT_TYPE_UNSIGNED_BYTE: return 1;
+                case TG3_COMPONENT_TYPE_SHORT:
+                case TG3_COMPONENT_TYPE_UNSIGNED_SHORT: return 2;
+                case TG3_COMPONENT_TYPE_INT:
+                case TG3_COMPONENT_TYPE_UNSIGNED_INT: return 4;
+                case TG3_COMPONENT_TYPE_FLOAT: return 4;
+                case TG3_COMPONENT_TYPE_DOUBLE: return 8;
+                default: return 0;
+            }
+        };
+        auto num_components = [](int32_t t) -> size_t {
+            switch (t) {
+                case TG3_TYPE_SCALAR: return 1;
+                case TG3_TYPE_VEC2: return 2;
+                case TG3_TYPE_VEC3: return 3;
+                case TG3_TYPE_VEC4: return 4;
+                case TG3_TYPE_MAT2: return 4;
+                case TG3_TYPE_MAT3: return 9;
+                case TG3_TYPE_MAT4: return 16;
+                default: return 0;
+            }
+        };
+        auto data_ptr = [&](const tg3_accessor& acc) -> const uint8_t* {
+            if (acc.buffer_view < 0) return nullptr;
+            const auto& bv = model.buffer_views[acc.buffer_view];
             const auto& buf = model.buffers[bv.buffer];
-            return buf.data.data() + bv.byteOffset + acc.byteOffset;
+            return buf.data.data + bv.byte_offset + acc.byte_offset;
         };
-
-        auto stride_of = [&](const tinygltf::Accessor& acc) -> size_t {
-            const auto& bv = model.bufferViews[acc.bufferView];
-            if (bv.byteStride != 0) return bv.byteStride;
-            return tinygltf::GetComponentSizeInBytes(acc.componentType) * tinygltf::GetNumComponentsInType(acc.type);
+        auto stride_of = [&](const tg3_accessor& acc) -> size_t {
+            if (acc.buffer_view < 0) return 0;
+            const auto& bv = model.buffer_views[acc.buffer_view];
+            if (bv.byte_stride != 0) return bv.byte_stride;
+            return component_size(acc.component_type) * num_components(acc.type);
         };
-
+        auto find_attr = [](const tg3_primitive& prim, const char* name) -> int32_t {
+            for (uint32_t i = 0; i < prim.attributes_count; i++) {
+                const auto& p = prim.attributes[i];
+                if (p.key.len == strlen(name) && memcmp(p.key.data, name, p.key.len) == 0)
+                    return p.value;
+            }
+            return -1;
+        };
         SkinnedGLTFData result;
-
         auto load_texture = [&](int tex_index, AllocatedImage fallback) -> AllocatedImage {
-            if (tex_index < 0 || tex_index >= (int)model.textures.size()) return fallback;
+            if (tex_index < 0 || tex_index >= (int)model.textures_count) return fallback;
             const auto& tex = model.textures[tex_index];
-            if (tex.source < 0 || tex.source >= (int)model.images.size()) return fallback;
+            if (tex.source < 0 || tex.source >= (int)model.images_count) return fallback;
             const auto& img = model.images[tex.source];
-            if (img.image.empty()) return fallback;
+            if (img.image.count == 0) return fallback;
             VkExtent3D extent = { (uint32_t)img.width, (uint32_t)img.height, 1 };
-            AllocatedImage tex_image = create_image((void*)img.image.data(), extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_SAMPLED_BIT);
+            AllocatedImage tex_image = create_image((void*)img.image.data, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_SAMPLED_BIT);
             _main_deletion_queue.push_function([tex_image]() {
                 destroy_image(tex_image);
             });
             return tex_image;
         };
-
-        result.materials.resize(model.materials.size());
-        for (size_t mi = 0; mi < model.materials.size(); mi++) {
+        result.materials.resize(model.materials_count);
+        for (uint32_t mi = 0; mi < model.materials_count; mi++) {
             const auto& mat = model.materials[mi];
             float scalar_tint = 1.f;
             float roughness = 1.f;
             float metallic = 0.f;
-            if (mat.pbrMetallicRoughness.baseColorFactor.size() >= 3) {
-                scalar_tint = (float)mat.pbrMetallicRoughness.baseColorFactor[0];
-            }
-            if (mat.pbrMetallicRoughness.roughnessFactor >= 0.0) {
-                roughness = (float)mat.pbrMetallicRoughness.roughnessFactor;
-            }
-            if (mat.pbrMetallicRoughness.metallicFactor >= 0.0) {
-                metallic = (float)mat.pbrMetallicRoughness.metallicFactor;
-            }
-
-            AllocatedImage albedo = load_texture(mat.pbrMetallicRoughness.baseColorTexture.index, _white_image);
-            AllocatedImage normal = load_texture(mat.normalTexture.index, _normal_image);
-            AllocatedImage roughness_map = load_texture(mat.pbrMetallicRoughness.metallicRoughnessTexture.index, _white_image);
-            AllocatedImage metallic_map = load_texture(mat.pbrMetallicRoughness.metallicRoughnessTexture.index, _black_image);
-            AllocatedImage emissive = load_texture(mat.emissiveTexture.index, _black_image);
-            AllocatedImage ao = load_texture(mat.occlusionTexture.index, _white_image);
-
+            scalar_tint = (float)mat.pbr_metallic_roughness.base_color_factor[0];
+            roughness = (float)mat.pbr_metallic_roughness.roughness_factor;
+            metallic = (float)mat.pbr_metallic_roughness.metallic_factor;
+            AllocatedImage albedo = load_texture(mat.pbr_metallic_roughness.base_color_texture.index, _white_image);
+            AllocatedImage normal = load_texture(mat.normal_texture.index, _normal_image);
+            AllocatedImage roughness_map = load_texture(mat.pbr_metallic_roughness.metallic_roughness_texture.index, _white_image);
+            AllocatedImage metallic_map = load_texture(mat.pbr_metallic_roughness.metallic_roughness_texture.index, _black_image);
+            AllocatedImage emissive = load_texture(mat.emissive_texture.index, _black_image);
+            AllocatedImage ao = load_texture(mat.occlusion_texture.index, _white_image);
             result.materials[mi] = create_material(albedo, normal, roughness_map, metallic_map, emissive, ao, scalar_tint, roughness, metallic);
         }
-
         vector<uint32_t> indices;
         vector<SkinnedVertex> vertices;
-
-        for (const tinygltf::Mesh& mesh : model.meshes) {
+        for (uint32_t mi = 0; mi < model.meshes_count; mi++) {
+            const tg3_mesh& mesh = model.meshes[mi];
             SkinnedMeshAsset new_mesh;
-            new_mesh.name = mesh.name;
+            new_mesh.name = mesh.name.data ? string(mesh.name.data, mesh.name.len) : "";
             indices.clear();
             vertices.clear();
-
-            for (const tinygltf::Primitive& prim : mesh.primitives) {
+            for (uint32_t pi = 0; pi < mesh.primitives_count; pi++) {
+                const tg3_primitive& prim = mesh.primitives[pi];
                 GeoSurface new_surface;
                 new_surface.start_index = static_cast<uint32_t>(indices.size());
                 const size_t initial_vtx = vertices.size();
-
                 {
-                    const tinygltf::Accessor& acc = model.accessors[prim.indices];
+                    if (prim.indices < 0) {
+                        fmt::println("GLTF: primitive missing indices");
+                        tg3_error_stack_free(&errors);
+                        tg3_model_free(&model);
+                        return {};
+                    }
+                    const tg3_accessor& acc = model.accessors[prim.indices];
                     new_surface.count = static_cast<uint32_t>(acc.count);
                     indices.reserve(indices.size() + acc.count);
                     const uint8_t* idx_data = data_ptr(acc);
-
-                    switch (acc.componentType) {
-                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+                    switch (acc.component_type) {
+                        case TG3_COMPONENT_TYPE_UNSIGNED_BYTE:
                             for (size_t i = 0; i < acc.count; i++) indices.push_back(idx_data[i] + (uint32_t)initial_vtx);
                             break;
-                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+                        case TG3_COMPONENT_TYPE_UNSIGNED_SHORT:
                             for (size_t i = 0; i < acc.count; i++) indices.push_back(reinterpret_cast<const uint16_t*>(idx_data)[i] + (uint32_t)initial_vtx);
                             break;
-                        case TINYGLTF_COMPONENT_TYPE_UNSIGNED_INT:
+                        case TG3_COMPONENT_TYPE_UNSIGNED_INT:
                             for (size_t i = 0; i < acc.count; i++) indices.push_back(reinterpret_cast<const uint32_t*>(idx_data)[i] + (uint32_t)initial_vtx);
                             break;
                         default:
-                            fmt::println("GLTF: unsupported index component type {}", acc.componentType);
+                            fmt::println("GLTF: unsupported index component type {}", acc.component_type);
+                            tg3_error_stack_free(&errors);
+                            tg3_model_free(&model);
                             return {};
                     }
                 }
-
                 {
-                    auto it = prim.attributes.find("POSITION");
-                    if (it == prim.attributes.end()) {
+                    int32_t pos_idx = find_attr(prim, "POSITION");
+                    if (pos_idx < 0) {
                         fmt::println("GLTF: primitive missing POSITION attribute");
+                        tg3_error_stack_free(&errors);
+                        tg3_model_free(&model);
                         return {};
                     }
-                    const tinygltf::Accessor& acc = model.accessors[it->second];
+                    const tg3_accessor& acc = model.accessors[pos_idx];
                     const size_t s = stride_of(acc);
                     const uint8_t* ptr = data_ptr(acc);
                     vertices.resize(initial_vtx + acc.count);
-
                     for (size_t i = 0; i < acc.count; i++) {
                         SkinnedVertex vtx{};
                         vtx.position = *reinterpret_cast<const glm::vec3*>(ptr + i * s);
@@ -5318,21 +5404,19 @@ namespace gvk {
                         vertices[initial_vtx + i] = vtx;
                     }
                 }
-
                 {
-                    auto it = prim.attributes.find("NORMAL");
-                    if (it != prim.attributes.end()) {
-                        const tinygltf::Accessor& acc = model.accessors[it->second];
+                    int32_t nrm_idx = find_attr(prim, "NORMAL");
+                    if (nrm_idx >= 0) {
+                        const tg3_accessor& acc = model.accessors[nrm_idx];
                         const size_t s = stride_of(acc);
                         const uint8_t* ptr = data_ptr(acc);
                         for (size_t i = 0; i < acc.count; i++) vertices[initial_vtx + i].normal = *reinterpret_cast<const glm::vec3*>(ptr + i * s);
                     }
                 }
-
                 {
-                    auto it = prim.attributes.find("TEXCOORD_0");
-                    if (it != prim.attributes.end()) {
-                        const tinygltf::Accessor& acc = model.accessors[it->second];
+                    int32_t uv_idx = find_attr(prim, "TEXCOORD_0");
+                    if (uv_idx >= 0) {
+                        const tg3_accessor& acc = model.accessors[uv_idx];
                         const size_t s = stride_of(acc);
                         const uint8_t* ptr = data_ptr(acc);
                         for (size_t i = 0; i < acc.count; i++) {
@@ -5340,11 +5424,10 @@ namespace gvk {
                         }
                     }
                 }
-
                 {
-                    auto it = prim.attributes.find("TANGENT");
-                    if (it != prim.attributes.end()) {
-                        const tinygltf::Accessor& acc = model.accessors[it->second];
+                    int32_t tan_idx = find_attr(prim, "TANGENT");
+                    if (tan_idx >= 0) {
+                        const tg3_accessor& acc = model.accessors[tan_idx];
                         const size_t s = stride_of(acc);
                         const uint8_t* ptr = data_ptr(acc);
                         for (size_t i = 0; i < acc.count; i++) {
@@ -5352,16 +5435,14 @@ namespace gvk {
                         }
                     }
                 }
-
                 {
-                    auto it = prim.attributes.find("JOINTS_0");
-                    if (it != prim.attributes.end()) {
-                        const tinygltf::Accessor& acc = model.accessors[it->second];
+                    int32_t jnt_idx = find_attr(prim, "JOINTS_0");
+                    if (jnt_idx >= 0) {
+                        const tg3_accessor& acc = model.accessors[jnt_idx];
                         const size_t s = stride_of(acc);
                         const uint8_t* ptr = data_ptr(acc);
-
-                        switch (acc.componentType) {
-                            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_BYTE:
+                        switch (acc.component_type) {
+                            case TG3_COMPONENT_TYPE_UNSIGNED_BYTE:
                                 for (size_t i = 0; i < acc.count; i++) {
                                     const uint8_t* j = ptr + i * s;
                                     vertices[initial_vtx + i].joints[0] = j[0];
@@ -5370,7 +5451,7 @@ namespace gvk {
                                     vertices[initial_vtx + i].joints[3] = j[3];
                                 }
                                 break;
-                            case TINYGLTF_COMPONENT_TYPE_UNSIGNED_SHORT:
+                            case TG3_COMPONENT_TYPE_UNSIGNED_SHORT:
                                 for (size_t i = 0; i < acc.count; i++) {
                                     const uint16_t* j = reinterpret_cast<const uint16_t*>(ptr + i * s);
                                     vertices[initial_vtx + i].joints[0] = j[0];
@@ -5380,16 +5461,17 @@ namespace gvk {
                                 }
                                 break;
                             default:
-                                fmt::println("GLTF: unsupported JOINTS_0 component type {}", acc.componentType);
+                                fmt::println("GLTF: unsupported JOINTS_0 component type {}", acc.component_type);
+                                tg3_error_stack_free(&errors);
+                                tg3_model_free(&model);
                                 return {};
                         }
                     }
                 }
-
                 {
-                    auto it = prim.attributes.find("WEIGHTS_0");
-                    if (it != prim.attributes.end()) {
-                        const tinygltf::Accessor& acc = model.accessors[it->second];
+                    int32_t wgt_idx = find_attr(prim, "WEIGHTS_0");
+                    if (wgt_idx >= 0) {
+                        const tg3_accessor& acc = model.accessors[wgt_idx];
                         const size_t s = stride_of(acc);
                         const uint8_t* ptr = data_ptr(acc);
                         for (size_t i = 0; i < acc.count; i++) {
@@ -5405,80 +5487,62 @@ namespace gvk {
                         }
                     }
                 }
-
                 new_mesh.surfaces.push_back(new_surface);
             }
-
             new_mesh.AABB_min = glm::vec3(FLT_MAX);
             new_mesh.AABB_max = glm::vec3(-FLT_MAX);
             for (const SkinnedVertex& vert : vertices) {
                 new_mesh.AABB_min = glm::min(new_mesh.AABB_min, vert.position);
                 new_mesh.AABB_max = glm::max(new_mesh.AABB_max, vert.position);
             }
-
             {
                 const size_t vb_size = vertices.size() * sizeof(SkinnedVertex);
                 const size_t ib_size = indices.size() * sizeof(uint32_t);
-
                 GPUMeshBuffers new_surface;
-
                 new_surface.vertex_buffer = create_buffer(vb_size, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
                 VkBufferDeviceAddressInfo device_address_info{.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO, .buffer = new_surface.vertex_buffer.buffer};
                 new_surface.vertex_buffer_address = vkGetBufferDeviceAddress(_vk_device, &device_address_info);
-
                 new_surface.index_buffer = create_buffer(ib_size, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
-
                 AllocatedBuffer staging = create_buffer(vb_size + ib_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
-
                 void* data = staging.allocation->GetMappedData();
-
                 memcpy(data, vertices.data(), vb_size);
                 memcpy((char*)data + vb_size, indices.data(), ib_size);
-
                 immediate_submit([&](VkCommandBuffer cmd) {
                     VkBufferCopy vertexCopy{ 0 };
                     vertexCopy.dstOffset = 0;
                     vertexCopy.srcOffset = 0;
                     vertexCopy.size = vb_size;
-
                     vkCmdCopyBuffer(cmd, staging.buffer, new_surface.vertex_buffer.buffer, 1, &vertexCopy);
-
                     VkBufferCopy indexCopy{ 0 };
                     indexCopy.dstOffset = 0;
                     indexCopy.srcOffset = vb_size;
                     indexCopy.size = ib_size;
-
                     vkCmdCopyBuffer(cmd, staging.buffer, new_surface.index_buffer.buffer, 1, &indexCopy);
                 });
-
                 destroy_buffer(staging);
-
                 new_mesh.mesh_buffers = new_surface;
                 _main_deletion_queue.push_function([buffers = new_surface]() {
                     destroy_buffer(buffers.vertex_buffer);
                     destroy_buffer(buffers.index_buffer);
                 });
             }
-
             result.meshes.emplace_back(make_shared<SkinnedMeshAsset>(move(new_mesh)));
         }
-
-        for (const auto& gltf_skin : model.skins) {
+        for (uint32_t si = 0; si < model.skins_count; si++) {
+            const auto& gltf_skin = model.skins[si];
             Skin skin;
-            skin.joint_count = static_cast<int>(gltf_skin.joints.size());
+            skin.joint_count = static_cast<int>(gltf_skin.joints_count);
             skin.parent_indices.assign(skin.joint_count, -1);
             skin.inverse_bind_matrices.assign(skin.joint_count, glm::mat4(1.0f));
-
             std::unordered_map<int, int> node_to_joint;
             for (int j = 0; j < skin.joint_count; j++) {
                 node_to_joint[gltf_skin.joints[j]] = j;
             }
-
-            if (gltf_skin.inverseBindMatrices >= 0) {
-                const tinygltf::Accessor& acc = model.accessors[gltf_skin.inverseBindMatrices];
-                const tinygltf::BufferView& bv = model.bufferViews[acc.bufferView];
-                const tinygltf::Buffer& buf = model.buffers[bv.buffer];
-                const float* data = reinterpret_cast<const float*>(buf.data.data() + bv.byteOffset + acc.byteOffset);
+            if (gltf_skin.inverse_bind_matrices >= 0) {
+                const tg3_accessor& acc = model.accessors[gltf_skin.inverse_bind_matrices];
+                const tg3_buffer_view& bv = model.buffer_views[acc.buffer_view];
+                const tg3_buffer& buf = model.buffers[bv.buffer];
+                const float* data = reinterpret_cast<const float*>(buf.data.data + bv.byte_offset + acc.byte_offset);
                 for (int i = 0; i < skin.joint_count; i++) {
                     glm::mat4 m(1.0f);
                     for (int c = 0; c < 16; c++) {
@@ -5487,16 +5551,15 @@ namespace gvk {
                     skin.inverse_bind_matrices[i] = m;
                 }
             }
-
-            std::vector<int> node_parent(model.nodes.size(), -1);
-            for (size_t i = 0; i < model.nodes.size(); i++) {
-                for (int child : model.nodes[i].children) {
-                    if (child >= 0 && child < static_cast<int>(model.nodes.size())) {
+            std::vector<int> node_parent(model.nodes_count, -1);
+            for (uint32_t i = 0; i < model.nodes_count; i++) {
+                for (uint32_t ci = 0; ci < model.nodes[i].children_count; ci++) {
+                    int child = model.nodes[i].children[ci];
+                    if (child >= 0 && child < static_cast<int>(model.nodes_count)) {
                         node_parent[child] = static_cast<int>(i);
                     }
                 }
             }
-
             for (int j = 0; j < skin.joint_count; j++) {
                 int node = gltf_skin.joints[j];
                 int parent_node = node_parent[node];
@@ -5509,45 +5572,40 @@ namespace gvk {
                     parent_node = node_parent[parent_node];
                 }
             }
-
             result.skins.push_back(std::move(skin));
         }
-
         if (!result.skins.empty()) {
             const Skin& primary_skin = result.skins[0];
             std::unordered_map<int, int> node_to_joint;
-            for (size_t s = 0; s < model.skins.size(); s++) {
-                for (size_t j = 0; j < model.skins[s].joints.size(); j++) {
+            for (uint32_t s = 0; s < model.skins_count; s++) {
+                for (uint32_t j = 0; j < model.skins[s].joints_count; j++) {
                     node_to_joint[model.skins[s].joints[j]] = static_cast<int>(j);
                 }
             }
-
-            for (const auto& gltf_anim : model.animations) {
+            for (uint32_t ai = 0; ai < model.animations_count; ai++) {
+                const auto& gltf_anim = model.animations[ai];
                 AnimationClip clip;
                 clip.duration = 0.0f;
                 clip.joints.resize(primary_skin.joint_count);
-
-                for (const auto& channel : gltf_anim.channels) {
-                    if (channel.target_node < 0) continue;
-                    auto joint_it = node_to_joint.find(channel.target_node);
+                for (uint32_t ci = 0; ci < gltf_anim.channels_count; ci++) {
+                    const auto& channel = gltf_anim.channels[ci];
+                    if (channel.target.node < 0) continue;
+                    auto joint_it = node_to_joint.find(channel.target.node);
                     if (joint_it == node_to_joint.end()) continue;
                     int joint = joint_it->second;
                     if (joint < 0 || joint >= primary_skin.joint_count) continue;
-
                     const auto& sampler = gltf_anim.samplers[channel.sampler];
-                    const tinygltf::Accessor& in_acc = model.accessors[sampler.input];
-                    const tinygltf::Accessor& out_acc = model.accessors[sampler.output];
-                    const tinygltf::BufferView& in_bv = model.bufferViews[in_acc.bufferView];
-                    const tinygltf::BufferView& out_bv = model.bufferViews[out_acc.bufferView];
-                    const tinygltf::Buffer& in_buf = model.buffers[in_bv.buffer];
-                    const tinygltf::Buffer& out_buf = model.buffers[out_bv.buffer];
-
-                    const float* times = reinterpret_cast<const float*>(in_buf.data.data() + in_bv.byteOffset + in_acc.byteOffset);
-                    const float* values = reinterpret_cast<const float*>(out_buf.data.data() + out_bv.byteOffset + out_acc.byteOffset);
-
+                    const tg3_accessor& in_acc = model.accessors[sampler.input];
+                    const tg3_accessor& out_acc = model.accessors[sampler.output];
+                    const tg3_buffer_view& in_bv = model.buffer_views[in_acc.buffer_view];
+                    const tg3_buffer_view& out_bv = model.buffer_views[out_acc.buffer_view];
+                    const tg3_buffer& in_buf = model.buffers[in_bv.buffer];
+                    const tg3_buffer& out_buf = model.buffers[out_bv.buffer];
+                    const float* times = reinterpret_cast<const float*>(in_buf.data.data + in_bv.byte_offset + in_acc.byte_offset);
+                    const float* values = reinterpret_cast<const float*>(out_buf.data.data + out_bv.byte_offset + out_acc.byte_offset);
                     auto& track = clip.joints[joint];
-
-                    if (channel.target_path == "translation") {
+                    string path = channel.target.path.data ? string(channel.target.path.data, channel.target.path.len) : "";
+                    if (path == "translation") {
                         track.timesT.assign(times, times + in_acc.count);
                         track.translations.reserve(out_acc.count);
                         for (size_t i = 0; i < out_acc.count; i++) {
@@ -5555,7 +5613,7 @@ namespace gvk {
                         }
                         if (!track.timesT.empty()) clip.duration = std::max(clip.duration, track.timesT.back());
                     }
-                    else if (channel.target_path == "rotation") {
+                    else if (path == "rotation") {
                         track.timesR.assign(times, times + in_acc.count);
                         track.rotations.reserve(out_acc.count);
                         for (size_t i = 0; i < out_acc.count; i++) {
@@ -5563,7 +5621,7 @@ namespace gvk {
                         }
                         if (!track.timesR.empty()) clip.duration = std::max(clip.duration, track.timesR.back());
                     }
-                    else if (channel.target_path == "scale") {
+                    else if (path == "scale") {
                         track.timesS.assign(times, times + in_acc.count);
                         track.scales.reserve(out_acc.count);
                         for (size_t i = 0; i < out_acc.count; i++) {
@@ -5575,13 +5633,13 @@ namespace gvk {
                 result.animations.push_back(std::move(clip));
             }
         }
-
         if (!result.meshes.empty() && !result.skins.empty()) {
             for (auto& mesh : result.meshes) {
                 mesh->skin = &result.skins[0];
             }
         }
-
+        tg3_error_stack_free(&errors);
+        tg3_model_free(&model);
         return result;
     }
 
