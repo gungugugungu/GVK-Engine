@@ -4697,14 +4697,39 @@ namespace gvk {
         };
         vector<Material> materials;
         materials.resize(model.materials_count);
-        auto load_texture = [&](int tex_index, AllocatedImage fallback) -> AllocatedImage {
+        auto load_texture = [&](int tex_index, AllocatedImage fallback, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB) -> AllocatedImage {
             if (tex_index < 0 || tex_index >= (int)model.textures_count) return fallback;
             const auto& tex = model.textures[tex_index];
             if (tex.source < 0 || tex.source >= (int)model.images_count) return fallback;
             const auto& img = model.images[tex.source];
-            if (img.image.count == 0) return fallback;
-            VkExtent3D extent = { (uint32_t)img.width, (uint32_t)img.height, 1 };
-            AllocatedImage tex_image = create_image((void*)img.image.data, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_SAMPLED_BIT);
+
+            const uint8_t* encoded = nullptr;
+            int encoded_len = 0;
+
+            if (img.buffer_view >= 0 && img.buffer_view < (int)model.buffer_views_count) {
+                const auto& bv = model.buffer_views[img.buffer_view];
+                const auto& buf = model.buffers[bv.buffer];
+                encoded = buf.data.data + bv.byte_offset;
+                encoded_len = (int)bv.byte_length;
+            }
+
+            int w = 0, h = 0, ch = 0;
+            stbi_uc* pixels = nullptr;
+
+            if (encoded) {
+                pixels = stbi_load_from_memory(encoded, encoded_len, &w, &h, &ch, STBI_rgb_alpha);
+            } else if (img.uri.data && img.uri.len > 0 && strncmp(img.uri.data, "data:", 5) != 0) {
+                std::string uri_str(img.uri.data, img.uri.len);
+                std::filesystem::path img_path = path.parent_path() / uri_str;
+                pixels = stbi_load(img_path.string().c_str(), &w, &h, &ch, STBI_rgb_alpha);
+            }
+
+            if (!pixels) return fallback;
+
+            VkExtent3D extent = { (uint32_t)w, (uint32_t)h, 1 };
+            AllocatedImage tex_image = create_image((void*)pixels, extent, format, VK_IMAGE_USAGE_SAMPLED_BIT);
+            stbi_image_free(pixels);
+
             _main_deletion_queue.push_function([tex_image]() {
                 destroy_image(tex_image);
             });
@@ -4937,14 +4962,39 @@ namespace gvk {
         vector<shared_ptr<MeshAsset>> loaded_meshes;
         vector<Material> materials;
         materials.resize(model.materials_count);
-        auto load_texture = [&](int tex_index, AllocatedImage fallback) -> AllocatedImage {
+        auto load_texture = [&](int tex_index, AllocatedImage fallback, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB) -> AllocatedImage {
             if (tex_index < 0 || tex_index >= (int)model.textures_count) return fallback;
             const auto& tex = model.textures[tex_index];
             if (tex.source < 0 || tex.source >= (int)model.images_count) return fallback;
             const auto& img = model.images[tex.source];
-            if (img.image.count == 0) return fallback;
-            VkExtent3D extent = { (uint32_t)img.width, (uint32_t)img.height, 1 };
-            AllocatedImage tex_image = create_image((void*)img.image.data, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_SAMPLED_BIT);
+
+            const uint8_t* encoded = nullptr;
+            int encoded_len = 0;
+
+            if (img.buffer_view >= 0 && img.buffer_view < (int)model.buffer_views_count) {
+                const auto& bv = model.buffer_views[img.buffer_view];
+                const auto& buf = model.buffers[bv.buffer];
+                encoded = buf.data.data + bv.byte_offset;
+                encoded_len = (int)bv.byte_length;
+            }
+
+            int w = 0, h = 0, ch = 0;
+            stbi_uc* pixels = nullptr;
+
+            if (encoded) {
+                pixels = stbi_load_from_memory(encoded, encoded_len, &w, &h, &ch, STBI_rgb_alpha);
+            } else if (img.uri.data && img.uri.len > 0 && strncmp(img.uri.data, "data:", 5) != 0) {
+                std::string uri_str(img.uri.data, img.uri.len);
+                std::filesystem::path img_path = path.parent_path() / uri_str;
+                pixels = stbi_load(img_path.string().c_str(), &w, &h, &ch, STBI_rgb_alpha);
+            }
+
+            if (!pixels) return fallback;
+
+            VkExtent3D extent = { (uint32_t)w, (uint32_t)h, 1 };
+            AllocatedImage tex_image = create_image((void*)pixels, extent, format, VK_IMAGE_USAGE_SAMPLED_BIT);
+            stbi_image_free(pixels);
+
             _main_deletion_queue.push_function([tex_image]() {
                 destroy_image(tex_image);
             });
@@ -5359,14 +5409,39 @@ namespace gvk {
             return -1;
         };
         SkinnedGLTFData result;
-        auto load_texture = [&](int tex_index, AllocatedImage fallback) -> AllocatedImage {
+        auto load_texture = [&](int tex_index, AllocatedImage fallback, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB) -> AllocatedImage {
             if (tex_index < 0 || tex_index >= (int)model.textures_count) return fallback;
             const auto& tex = model.textures[tex_index];
             if (tex.source < 0 || tex.source >= (int)model.images_count) return fallback;
             const auto& img = model.images[tex.source];
-            if (img.image.count == 0) return fallback;
-            VkExtent3D extent = { (uint32_t)img.width, (uint32_t)img.height, 1 };
-            AllocatedImage tex_image = create_image((void*)img.image.data, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_SAMPLED_BIT);
+
+            const uint8_t* encoded = nullptr;
+            int encoded_len = 0;
+
+            if (img.buffer_view >= 0 && img.buffer_view < (int)model.buffer_views_count) {
+                const auto& bv = model.buffer_views[img.buffer_view];
+                const auto& buf = model.buffers[bv.buffer];
+                encoded = buf.data.data + bv.byte_offset;
+                encoded_len = (int)bv.byte_length;
+            }
+
+            int w = 0, h = 0, ch = 0;
+            stbi_uc* pixels = nullptr;
+
+            if (encoded) {
+                pixels = stbi_load_from_memory(encoded, encoded_len, &w, &h, &ch, STBI_rgb_alpha);
+            } else if (img.uri.data && img.uri.len > 0 && strncmp(img.uri.data, "data:", 5) != 0) {
+                std::string uri_str(img.uri.data, img.uri.len);
+                std::filesystem::path img_path = path.parent_path() / uri_str;
+                pixels = stbi_load(img_path.string().c_str(), &w, &h, &ch, STBI_rgb_alpha);
+            }
+
+            if (!pixels) return fallback;
+
+            VkExtent3D extent = { (uint32_t)w, (uint32_t)h, 1 };
+            AllocatedImage tex_image = create_image((void*)pixels, extent, format, VK_IMAGE_USAGE_SAMPLED_BIT);
+            stbi_image_free(pixels);
+
             _main_deletion_queue.push_function([tex_image]() {
                 destroy_image(tex_image);
             });
