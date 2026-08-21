@@ -4621,8 +4621,14 @@ namespace gvk {
         return false;
     }
 
-    optional<vector<shared_ptr<MeshAsset>>> load_gltf_meshes(filesystem::path path)
-    {
+    struct GLTFMeshReturns {
+        MeshAsset mesh;
+        Material material;
+        vector<Vertex> vertices;
+        vector<uint32_t> indices;
+    };
+
+    optional<vector<GLTFMeshReturns>> load_gltf_meshes(filesystem::path path) {
         fmt::println("loading GLTF: {}", path.string());
         tg3_model model{};
         tg3_error_stack errors{};
@@ -4689,15 +4695,44 @@ namespace gvk {
             }
             return -1;
         };
-        vector<shared_ptr<MeshAsset>> meshes;
-        vector<uint32_t> indices;
-        vector<Vertex> vertices;
+        vector<Material> materials;
+        materials.resize(model.materials_count);
+        auto load_texture = [&](int tex_index, AllocatedImage fallback) -> AllocatedImage {
+            if (tex_index < 0 || tex_index >= (int)model.textures_count) return fallback;
+            const auto& tex = model.textures[tex_index];
+            if (tex.source < 0 || tex.source >= (int)model.images_count) return fallback;
+            const auto& img = model.images[tex.source];
+            if (img.image.count == 0) return fallback;
+            VkExtent3D extent = { (uint32_t)img.width, (uint32_t)img.height, 1 };
+            AllocatedImage tex_image = create_image((void*)img.image.data, extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_SAMPLED_BIT);
+            _main_deletion_queue.push_function([tex_image]() {
+                destroy_image(tex_image);
+            });
+            return tex_image;
+        };
+        for (uint32_t mi = 0; mi < model.materials_count; mi++) {
+            const auto& mat = model.materials[mi];
+            float scalar_tint = 1.f;
+            float roughness = 1.f;
+            float metallic = 0.f;
+            scalar_tint = (float)mat.pbr_metallic_roughness.base_color_factor[0];
+            roughness = (float)mat.pbr_metallic_roughness.roughness_factor;
+            metallic = (float)mat.pbr_metallic_roughness.metallic_factor;
+            AllocatedImage albedo = load_texture(mat.pbr_metallic_roughness.base_color_texture.index, _white_image);
+            AllocatedImage normal = load_texture(mat.normal_texture.index, _normal_image);
+            AllocatedImage roughness_map = load_texture(mat.pbr_metallic_roughness.metallic_roughness_texture.index, _white_image);
+            AllocatedImage metallic_map = load_texture(mat.pbr_metallic_roughness.metallic_roughness_texture.index, _black_image);
+            AllocatedImage emissive = load_texture(mat.emissive_texture.index, _black_image);
+            AllocatedImage ao = load_texture(mat.occlusion_texture.index, _white_image);
+            materials[mi] = create_material(albedo, normal, roughness_map, metallic_map, emissive, ao, scalar_tint, roughness, metallic);
+        }
+        vector<GLTFMeshReturns> meshes;
         for (uint32_t mi = 0; mi < model.meshes_count; mi++) {
             const tg3_mesh& mesh = model.meshes[mi];
             MeshAsset new_mesh;
             new_mesh.name = mesh.name.data ? string(mesh.name.data, mesh.name.len) : "";
-            indices.clear();
-            vertices.clear();
+            vector<uint32_t> indices;
+            vector<Vertex> vertices;
             for (uint32_t pi = 0; pi < mesh.primitives_count; pi++) {
                 const tg3_primitive& prim = mesh.primitives[pi];
                 GeoSurface new_surface;
@@ -4794,7 +4829,21 @@ namespace gvk {
                 destroy_buffer(buffers.vertex_buffer);
                 destroy_buffer(buffers.index_buffer);
             });
-            meshes.emplace_back(make_shared<MeshAsset>(move(new_mesh)));
+            GLTFMeshReturns ret;
+            ret.mesh = move(new_mesh);
+            if (mesh.primitives_count > 0) {
+                int mat_idx = mesh.primitives[0].material;
+                if (mat_idx >= 0 && mat_idx < (int)materials.size()) {
+                    ret.material = materials[mat_idx];
+                } else {
+                    ret.material = create_material(_white_image, _white_image, _white_image, _black_image, _black_image, _white_image);
+                }
+            } else {
+                ret.material = create_material(_white_image, _white_image, _white_image, _black_image, _black_image, _white_image);
+            }
+            ret.vertices = move(vertices);
+            ret.indices = move(indices);
+            meshes.push_back(move(ret));
         }
         tg3_error_stack_free(&errors);
         tg3_model_free(&model);
