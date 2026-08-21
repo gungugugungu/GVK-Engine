@@ -4881,6 +4881,8 @@ namespace gvk {
         glm::vec3 position;
         glm::vec3 scale;
         glm::quat rot;
+        vector<Vertex> vertices;
+        vector<uint32_t> indices;
     };
 
     struct GLTFReturns {
@@ -4960,6 +4962,8 @@ namespace gvk {
         GLTFReturns result;
         result.dir_light = DirectionalLight{};
         vector<shared_ptr<MeshAsset>> loaded_meshes;
+        vector<vector<Vertex>> loaded_mesh_vertices;
+        vector<vector<uint32_t>> loaded_mesh_indices;
         vector<Material> materials;
         materials.resize(model.materials_count);
         auto load_texture = [&](int tex_index, AllocatedImage fallback, VkFormat format = VK_FORMAT_R8G8B8A8_SRGB) -> AllocatedImage {
@@ -5119,6 +5123,8 @@ namespace gvk {
                 destroy_buffer(buffers.index_buffer);
             });
             loaded_meshes.emplace_back(make_shared<MeshAsset>(move(new_mesh)));
+            loaded_mesh_vertices.push_back(move(vertices));
+            loaded_mesh_indices.push_back(move(indices));
         }
         auto get_node_matrix = [](const tg3_node& node) -> glm::mat4 {
             if (node.has_matrix) {
@@ -5151,6 +5157,8 @@ namespace gvk {
             if (node.mesh >= 0 && node.mesh < (int)loaded_meshes.size()) {
                 GLTFReturnMesh rm;
                 rm.mesh = *loaded_meshes[node.mesh];
+                rm.vertices = loaded_mesh_vertices[node.mesh];
+                rm.indices = loaded_mesh_indices[node.mesh];
                 if (node.mesh < (int)model.meshes_count && model.meshes[node.mesh].primitives_count > 0) {
                     int mat_idx = model.meshes[node.mesh].primitives[0].material;
                     if (mat_idx >= 0 && mat_idx < (int)materials.size()) {
