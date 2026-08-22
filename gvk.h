@@ -4289,7 +4289,7 @@ namespace gvk {
             glm::vec3 min;
             glm::vec3 max;
             calculate_world_AABB(min, max, m);
-            if (is_AABB_inside_frustum(min, max, fc_left_plane, fc_right_plane, fc_bottom_plane, fc_top_plane, fc_near_plane, fc_top_plane)) {
+            if (is_AABB_inside_frustum(min, max, fc_left_plane, fc_right_plane, fc_bottom_plane, fc_top_plane, fc_near_plane, fc_far_plane)) {
                 MaterialPushConstants material_push_constants;
                 material_push_constants.roughness = m.material.roughness;
                 material_push_constants.metallic = m.material.metallic;
@@ -5150,9 +5150,9 @@ namespace gvk {
             world_scale.y = glm::length(glm::vec3(world[1]));
             world_scale.z = glm::length(glm::vec3(world[2]));
             glm::mat3 rotm;
-            rotm[0] = glm::vec3(world[0]) / world_scale.x;
-            rotm[1] = glm::vec3(world[1]) / world_scale.y;
-            rotm[2] = glm::vec3(world[2]) / world_scale.z;
+            rotm[0] = glm::vec3(world[0]) / std::max(world_scale.x, 1e-6f);
+            rotm[1] = glm::vec3(world[1]) / std::max(world_scale.y, 1e-6f);
+            rotm[2] = glm::vec3(world[2]) / std::max(world_scale.z, 1e-6f);
             glm::quat world_rot = glm::quat_cast(rotm);
             if (node.mesh >= 0 && node.mesh < (int)loaded_meshes.size()) {
                 GLTFReturnMesh rm;
