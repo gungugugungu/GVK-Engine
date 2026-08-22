@@ -1513,7 +1513,7 @@ namespace gvk {
     inline AllocatedImage _depth_image;
     inline VkExtent2D _draw_extent;
     glm::mat4 projection;
-    float proj_far = 10000.f;
+    float proj_far = 1000.f;
     float proj_near = 0.1f;
 
     // descriptors
@@ -1783,6 +1783,20 @@ namespace gvk {
         }
     }
 
+    void load_font(stbtt_fontinfo *font_info, const char *filename) {
+        FILE* font_file = fopen(filename, "rb");
+        fseek(font_file, 0, SEEK_END);
+        size_t font_size = ftell(font_file);
+        fseek(font_file, 0, SEEK_SET);
+
+        unsigned char* font_buffer = new unsigned char[font_size];
+        fread(font_buffer, 1, font_size, font_file);
+        fclose(font_file);
+
+        stbtt_InitFont(font_info, font_buffer, 0);
+        cout << "loaded font " << to_string(*filename) << endl;
+    }
+
     class Surface {
     public:
         vector<vector<glm::vec4>> pixels;
@@ -1831,75 +1845,57 @@ namespace gvk {
             }
         }
 
-        void draw_text(const stbtt_fontinfo* font, const string& text, glm::vec2 pos, float scale, glm::vec4 text_color = {1.0f, 1.0f, 1.0f, 1.0f}) {
-            if (pixels.empty() || pixels[0].empty() || !font) return;
+        void draw_text(const stbtt_fontinfo* font, const string& text, glm::vec2 pos, float pixel_height, glm::vec4 text_color = {1.0f, 1.0f, 1.0f, 1.0f}) {
+            if (pixels.empty() || pixels[0].empty() || !font || text.empty()) return;
 
-            int dest_width = pixels[0].size();
-            int dest_height = pixels.size();
+            int dest_width = static_cast<int>(pixels[0].size());
+            int dest_height = static_cast<int>(pixels.size());
+
+            float scale = stbtt_ScaleForPixelHeight(font, pixel_height);
 
             float x = pos.x;
             float baseline_y = pos.y;
 
-            int ascent, descent, line_gap;
-            stbtt_GetFontVMetrics(font, &ascent, &descent, &line_gap);
-            float scaled_ascent = ascent * scale;
-            float scaled_descent = descent * scale;
+            for (size_t i = 0; i < text.size(); ++i) {
+                int codepoint = static_cast<unsigned char>(text[i]);
 
-            float total_width = 0.0f;
-            for (size_t i = 0; i < text.length(); i++) {
                 int advance, lsb;
-                stbtt_GetCodepointHMetrics(font, text[i], &advance, &lsb);
-                total_width += advance * scale;
+                stbtt_GetCodepointHMetrics(font, codepoint, &advance, &lsb);
 
-                if (i < text.length() - 1) {
-                    int kern = stbtt_GetCodepointKernAdvance(font, text[i], text[i + 1]);
-                    total_width += kern * scale;
-                }
-            }
-
-            x += total_width;
-
-            for (int i = (int)text.length() - 1; i >= 0; i--) {
-                int advance, lsb;
-                stbtt_GetCodepointHMetrics(font, text[i], &advance, &lsb);
-
-                x -= advance * scale;
-
-                if (i > 0) {
-                    int kern = stbtt_GetCodepointKernAdvance(font, text[i-1], text[i]);
-                    x -= kern * scale;
-                }
-
-                int glyph_width, glyph_height, glyph_xoff, glyph_yoff;
-                unsigned char* glyph_bitmap = stbtt_GetCodepointBitmap(font, 0, scale, text[i], &glyph_width, &glyph_height, &glyph_xoff, &glyph_yoff);
+                int glyph_width = 0, glyph_height = 0, glyph_xoff = 0, glyph_yoff = 0;
+                unsigned char* glyph_bitmap = stbtt_GetCodepointBitmap(
+                    font, scale, scale, codepoint,
+                    &glyph_width, &glyph_height, &glyph_xoff, &glyph_yoff);
 
                 if (glyph_bitmap) {
-                    int start_x = (int)(x + glyph_xoff);
-                    int start_y = (int)(baseline_y - scaled_descent - glyph_yoff - glyph_height);
+                    int start_x = static_cast<int>(x + glyph_xoff);
+                    int start_y = static_cast<int>(baseline_y + glyph_yoff);
 
-                    for (int gy = 0; gy < glyph_height; gy++) {
-                        for (int gx = 0; gx < glyph_width; gx++) {
+                    for (int gy = 0; gy < glyph_height; ++gy) {
+                        for (int gx = 0; gx < glyph_width; ++gx) {
                             int target_x = start_x + gx;
                             int target_y = start_y + gy;
 
-                            if (target_x >= 0 && target_x < dest_width && target_y >= 0 && target_y < dest_height) {
+                            if (target_x >= 0 && target_x < dest_width &&
+                                target_y >= 0 && target_y < dest_height) {
                                 float alpha = glyph_bitmap[gy * glyph_width + gx] / 255.0f;
-
                                 if (alpha > 0.0f) {
-                                    glm::vec4 bg_pixel = pixels[target_y][target_x];
-                                    glm::vec4 final_pixel = {
-                                        bg_pixel.x * (1.0f - alpha) + text_color.x * alpha,
-                                        bg_pixel.y * (1.0f - alpha) + text_color.y * alpha,
-                                        bg_pixel.z * (1.0f - alpha) + text_color.z * alpha,
-                                        bg_pixel.w * (1.0f - alpha) + text_color.w * alpha
-                                    };
-                                    pixels[target_y][target_x] = final_pixel;
+                                    glm::vec4& bg = pixels[target_y][target_x];
+                                    bg.x = bg.x * (1.0f - alpha) + text_color.x * alpha;
+                                    bg.y = bg.y * (1.0f - alpha) + text_color.y * alpha;
+                                    bg.z = bg.z * (1.0f - alpha) + text_color.z * alpha;
+                                    bg.w = bg.w * (1.0f - alpha) + text_color.w * alpha;
                                 }
-                            }
+                                }
                         }
                     }
-
                     stbtt_FreeBitmap(glyph_bitmap, nullptr);
+                }
+
+                x += advance * scale;
+                if (i + 1 < text.size()) {
+                    int kern = stbtt_GetCodepointKernAdvance(font, codepoint, static_cast<unsigned char>(text[i + 1]));
+                    x += kern * scale;
                 }
             }
         }
@@ -2009,10 +2005,16 @@ namespace gvk {
 
         void refresh() {
             // basically just create / recreate the AllocatedImage
-
             if (pixels.empty() || pixels[0].empty()) {
                 cout << "Nuh uh the pixels are empty what are you refreshing" << endl;
                 return;
+            }
+
+            if (vk_image.image != VK_NULL_HANDLE) {
+                AllocatedImage old_image = vk_image;
+                get_current_frame()._deletion_queue.push_function([old_image]() {
+                    destroy_image(old_image);
+                });
             }
 
             const int height = pixels.size();
@@ -2027,20 +2029,9 @@ namespace gvk {
                     data[idx + 3] = static_cast<uint8_t>(pixels[i][j].w * 255.0f);
                 }
             }
-
             VkExtent3D extent = { static_cast<uint32_t>(pixels[0].size()), static_cast<uint32_t>(pixels.size()), 1 };
             vk_image = create_image(data.data(), extent, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_USAGE_SAMPLED_BIT);
-
-            if (!in_deletion_queue) {
-                _main_deletion_queue.push_function([&]() {
-                    destroy_image(vk_image);
-                });
-                in_deletion_queue = true;
-            }
         }
-
-    private:
-        bool in_deletion_queue = false;
     };
 
     Surface display;
@@ -5893,6 +5884,8 @@ namespace gvk {
 
     void quit() {
         vkDeviceWaitIdle(_vk_device);
+
+        destroy_image(gvk::display.vk_image);
 
         for (int i = 0; i < FRAME_OVERLAP; i++) {
             _frames[i]._deletion_queue.flush();
