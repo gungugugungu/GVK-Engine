@@ -1797,6 +1797,63 @@ namespace gvk {
         cout << "loaded font " << to_string(*filename) << endl;
     }
 
+    glm::vec2 get_text_size(const stbtt_fontinfo* font, const std::string& text, float pixel_height) {
+        if (!font || text.empty()) return {0.0f, 0.0f};
+
+        float scale = stbtt_ScaleForPixelHeight(font, pixel_height);
+
+        float min_x = 0.0f, max_x = 0.0f;
+        float min_y = 0.0f, max_y = 0.0f;
+        bool has_glyph = false;
+
+        float x = 0.0f;
+
+        for (size_t i = 0; i < text.size(); ++i) {
+            int codepoint = static_cast<unsigned char>(text[i]);
+
+            int advance, lsb;
+            stbtt_GetCodepointHMetrics(font, codepoint, &advance, &lsb);
+
+            int glyph_width = 0, glyph_height = 0, glyph_xoff = 0, glyph_yoff = 0;
+            stbtt_GetCodepointBitmapBox(font, codepoint, scale, scale, &glyph_xoff, &glyph_yoff, &glyph_width, &glyph_height);
+
+            int x0, y0, x1, y1;
+            stbtt_GetCodepointBitmapBox(font, codepoint, scale, scale, &x0, &y0, &x1, &y1);
+
+            float glyph_left = x + x0;
+            float glyph_right = x + x1;
+            float glyph_top = y0;
+            float glyph_bottom = y1;
+
+            if (!has_glyph) {
+                min_x = glyph_left;
+                max_x = glyph_right;
+                min_y = glyph_top;
+                max_y = glyph_bottom;
+                has_glyph = true;
+            } else {
+                min_x = std::min(min_x, glyph_left);
+                max_x = std::max(max_x, glyph_right);
+                min_y = std::min(min_y, glyph_top);
+                max_y = std::max(max_y, glyph_bottom);
+            }
+
+            x += advance * scale;
+
+            if (i + 1 < text.size()) {
+                int kern = stbtt_GetCodepointKernAdvance(font, codepoint, static_cast<unsigned char>(text[i + 1]));
+                x += kern * scale;
+            }
+        }
+
+        if (!has_glyph) return {0.0f, 0.0f};
+
+        float width = max_x - min_x;
+        float height = max_y - min_y;
+
+        return {width, height};
+    }
+
     class Surface {
     public:
         vector<vector<glm::vec4>> pixels;
@@ -1853,8 +1910,11 @@ namespace gvk {
 
             float scale = stbtt_ScaleForPixelHeight(font, pixel_height);
 
+            int ascent, descent, lineGap;
+            stbtt_GetFontVMetrics(font, &ascent, &descent, &lineGap);
+
+            float baseline_y = pos.y + ascent * scale;
             float x = pos.x;
-            float baseline_y = pos.y;
 
             for (size_t i = 0; i < text.size(); ++i) {
                 int codepoint = static_cast<unsigned char>(text[i]);
