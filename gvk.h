@@ -808,6 +808,8 @@ namespace gvk {
         GPUMeshBuffers mesh_buffers;
         glm::vec3 AABB_min;
         glm::vec3 AABB_max;
+        vector<Vertex> vertices;
+        vector<uint32_t> indices;
     };
 
     struct SkinnedVertex {
@@ -4675,8 +4677,6 @@ namespace gvk {
     struct GLTFMeshReturns {
         MeshAsset mesh;
         Material material;
-        vector<Vertex> vertices;
-        vector<uint32_t> indices;
     };
 
     optional<vector<GLTFMeshReturns>> load_gltf_meshes(filesystem::path path) {
@@ -4917,8 +4917,8 @@ namespace gvk {
             } else {
                 ret.material = create_material(_white_image, _white_image, _white_image, _black_image, _black_image, _white_image);
             }
-            ret.vertices = move(vertices);
-            ret.indices = move(indices);
+            ret.mesh.vertices = move(vertices);
+            ret.mesh.indices = move(indices);
             meshes.push_back(move(ret));
         }
         tg3_error_stack_free(&errors);
@@ -4932,8 +4932,6 @@ namespace gvk {
         glm::vec3 position;
         glm::vec3 scale;
         glm::quat rot;
-        vector<Vertex> vertices;
-        vector<uint32_t> indices;
     };
 
     struct GLTFReturns {
@@ -5208,8 +5206,8 @@ namespace gvk {
             if (node.mesh >= 0 && node.mesh < (int)loaded_meshes.size()) {
                 GLTFReturnMesh rm;
                 rm.mesh = *loaded_meshes[node.mesh];
-                rm.vertices = loaded_mesh_vertices[node.mesh];
-                rm.indices = loaded_mesh_indices[node.mesh];
+                rm.mesh.vertices = loaded_mesh_vertices[node.mesh];
+                rm.mesh.indices = loaded_mesh_indices[node.mesh];
                 if (node.mesh < (int)model.meshes_count && model.meshes[node.mesh].primitives_count > 0) {
                     int mat_idx = model.meshes[node.mesh].primitives[0].material;
                     if (mat_idx >= 0 && mat_idx < (int)materials.size()) {
