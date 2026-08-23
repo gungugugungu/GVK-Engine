@@ -1895,7 +1895,7 @@ namespace gvk {
                             src_pixel.x * other_surf.color.x,
                             src_pixel.y * other_surf.color.y,
                             src_pixel.z * other_surf.color.z,
-                            src_pixel.w * other_surf.color.w
+                            static_cast<float>(clamp(src_pixel.w * other_surf.color.w + pixels[src_y][src_x].w, 0.f, 1.f))
                         };
 
                         pixels[target_y][target_x] = final_pixel;
