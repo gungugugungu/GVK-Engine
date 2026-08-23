@@ -17,5 +17,5 @@ void main() {
     float norm_dist = dist / sqrt(0.5);
     color *= max(0.0, 1.0 - vignette.strength * pow(norm_dist, vignette.radius));
 
-    out_color = color;
+    out_color = vec4(color.rgb, texture(source_color, uv).a);
 }

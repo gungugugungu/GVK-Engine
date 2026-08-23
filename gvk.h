@@ -3314,7 +3314,6 @@ namespace gvk {
         void run_pass(VkCommandBuffer cmd, AllocatedImage image, AllocatedImage dpth_image) {
             if (bloom_enabled) apply_bloom(cmd, image);
             if (vignette_enabled) apply_vignette(cmd, image);
-            if (ao_enabled) apply_ssao(cmd, image, dpth_image);
             if (tonemapping_enabled) {
                 apply_tonemapping(cmd, image);
                 transition_image(cmd, _tonemap_out_image.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
@@ -5886,6 +5885,9 @@ namespace gvk {
 
         transition_image(cmd, _draw_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         transition_image(cmd, _skybox_draw_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        transition_image(cmd, _depth_image_msaa.image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+        main_post_processing_stack.apply_ssao(cmd, _draw_image, _depth_image_msaa);
 
         transition_image(cmd, _composite_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
@@ -5893,7 +5895,6 @@ namespace gvk {
 
         // post-processing
         transition_image(cmd, _composite_image.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        transition_image(cmd, _depth_image_msaa.image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         main_post_processing_stack.run_pass(cmd, _composite_image, _depth_image_msaa);
         transition_image(cmd, _depth_image_msaa.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
 
