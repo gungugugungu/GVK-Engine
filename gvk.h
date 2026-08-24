@@ -1891,14 +1891,31 @@ namespace gvk {
 
                     if (target_x >= 0 && target_x < dest_width && target_y >= 0 && target_y < dest_height) {
                         glm::vec4 src_pixel = other_surf.pixels[src_y][src_x];
-                        glm::vec4 final_pixel = {
+                        glm::vec4 tinted_src = {
                             src_pixel.x * other_surf.color.x,
                             src_pixel.y * other_surf.color.y,
                             src_pixel.z * other_surf.color.z,
-                            static_cast<float>(clamp(src_pixel.w * other_surf.color.w + pixels[src_y][src_x].w, 0.f, 1.f))
+                            src_pixel.w * other_surf.color.w
                         };
 
-                        pixels[target_y][target_x] = final_pixel;
+                        glm::vec4& dst_pixel = pixels[target_y][target_x];
+                        float src_alpha = clamp(tinted_src.w, 0.f, 1.f);
+                        float dst_alpha = clamp(dst_pixel.w, 0.f, 1.f);
+                        float out_alpha = src_alpha + dst_alpha * (1.0f - src_alpha);
+
+                        glm::vec4 final_pixel;
+                        if (out_alpha > 0.0f) {
+                            final_pixel.x = (tinted_src.x * src_alpha + dst_pixel.x * dst_alpha * (1.0f - src_alpha)) / out_alpha;
+                            final_pixel.y = (tinted_src.y * src_alpha + dst_pixel.y * dst_alpha * (1.0f - src_alpha)) / out_alpha;
+                            final_pixel.z = (tinted_src.z * src_alpha + dst_pixel.z * dst_alpha * (1.0f - src_alpha)) / out_alpha;
+                        } else {
+                            final_pixel.x = 0.0f;
+                            final_pixel.y = 0.0f;
+                            final_pixel.z = 0.0f;
+                        }
+                        final_pixel.w = out_alpha;
+
+                        dst_pixel = final_pixel;
                     }
                 }
             }
@@ -2136,7 +2153,7 @@ namespace gvk {
         VkPipeline _bloom_comp_pipeline;
         VkPipelineLayout _bloom_comp_pipeline_layout;
         VkDescriptorSetLayout _bloom_comp_descriptor_layout;
-        float bloom_filter_threshold = 0.8f;
+        float bloom_filter_threshold = 0.95f;
         float bloom_filter_knee = 0.2f;
         int bloom_blur_passes = 4;
         float bloom_intensity = 1.f;
