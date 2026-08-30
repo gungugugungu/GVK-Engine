@@ -1582,7 +1582,7 @@ namespace gvk {
     inline VkDescriptorSetLayout _composite_descriptor_layout;
 
     // msaa
-    inline VkSampleCountFlagBits msaa_sample_count = VK_SAMPLE_COUNT_8_BIT;
+    inline VkSampleCountFlagBits msaa_sample_count = VK_SAMPLE_COUNT_4_BIT;
     inline AllocatedImage _draw_image_msaa;
     inline AllocatedImage _depth_image_msaa;
 
@@ -2175,7 +2175,7 @@ namespace gvk {
         VkDescriptorSetLayout _ao_comp_descriptor_layout;
         float ao_radius = 0.8f;
         float ao_bias = 0.02f;
-        int ao_samples = 16;
+        int ao_samples = 8;
 
         struct TonemapPushConstants {
             float temp = 0.f;
