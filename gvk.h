@@ -1547,6 +1547,7 @@ namespace gvk {
 
     inline VkSampler _default_sampler_linear;
     inline VkSampler _default_sampler_nearest;
+    inline VkSampler _material_default_sampler;
 
     inline VkDescriptorSetLayout _mesh_descriptor_layout;
 
@@ -2119,6 +2120,13 @@ namespace gvk {
     public:
         AllocatedImage out_image;
 
+        // pipeline
+        bool vignette_enabled = true;
+        bool bloom_enabled = true;
+        bool tonemapping_enabled = true;
+        bool ao_enabled = true;
+        bool pixelation_enabled = false;
+
         // vignette
         AllocatedImage _vn_out_image;
         VkPipeline _vn_pipeline;
@@ -2126,6 +2134,13 @@ namespace gvk {
         VkDescriptorSetLayout _vn_descriptor_layout;
         float vignette_strength = 0.5f;
         float vignette_radius = 0.8f;
+
+        // pixelation
+        AllocatedImage _px_out_image;
+        VkPipeline _px_pipeline;
+        VkPipelineLayout _px_pipeline_layout;
+        VkDescriptorSetLayout _px_descriptor_layout;
+        int pixelation_size = 4;
 
         // gaussian_blur
         AllocatedImage _gb_out_image;
@@ -2153,7 +2168,7 @@ namespace gvk {
         VkPipeline _bloom_comp_pipeline;
         VkPipelineLayout _bloom_comp_pipeline_layout;
         VkDescriptorSetLayout _bloom_comp_descriptor_layout;
-        float bloom_filter_threshold = 0.95f;
+        float bloom_filter_threshold = 0.85f;
         float bloom_filter_knee = 0.2f;
         int bloom_blur_passes = 4;
         float bloom_intensity = 1.f;
@@ -2193,12 +2208,6 @@ namespace gvk {
         };
 
         TonemapPushConstants tonemap_values;
-
-        // pipeline
-        bool vignette_enabled = true;
-        bool bloom_enabled = true;
-        bool tonemapping_enabled = true;
-        bool ao_enabled = true;
 
         struct VignettePushConstants {
             float strength;
@@ -2345,6 +2354,151 @@ namespace gvk {
 
             transition_image(cmd, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             transition_image(cmd, _vn_out_image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        }
+
+        struct PixelationPushConstants {
+            int pixelation_size = 4;
+        };
+
+        void _init_pixelation() {
+            DescriptorLayoutBuilder builder;
+            builder.add_binding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            _px_descriptor_layout = builder.build(_vk_device, VK_SHADER_STAGE_FRAGMENT_BIT);
+
+            VkPushConstantRange pixelation_push_range{};
+            pixelation_push_range.offset = 0;
+            pixelation_push_range.size = sizeof(PixelationPushConstants);
+            pixelation_push_range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+            VkPipelineLayoutCreateInfo layout_info = pipeline_layout_create_info();
+            layout_info.setLayoutCount = 1;
+            layout_info.pSetLayouts = &_px_descriptor_layout;
+            layout_info.pushConstantRangeCount = 1;
+            layout_info.pPushConstantRanges = &pixelation_push_range;
+            vkCreatePipelineLayout(_vk_device, &layout_info, nullptr, &_px_pipeline_layout);
+
+            VkShaderModule vert_shader, frag_shader;
+            if (!load_shader_module(gvk_shader("fullscreen_triangle.vert.spv").c_str(), _vk_device, &vert_shader)) {
+                cout << "error when loading pixelation vert (aka fullscreen triangle) shader" << endl;
+            }
+            if (!load_shader_module(gvk_shader("pixelate.frag.spv").c_str(), _vk_device, &frag_shader)) {
+                cout << "error when loading pixelation frag shader" << endl;
+            }
+
+            PipelineBuilder pip_builder;
+            pip_builder._pipeline_layout = _px_pipeline_layout;
+            pip_builder.set_shaders(vert_shader, frag_shader);
+            pip_builder.set_input_topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+            pip_builder.set_polygon_mode(VK_POLYGON_MODE_FILL);
+            pip_builder.set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE);
+            pip_builder.set_multisampling_none();
+            pip_builder.disable_blending();
+            pip_builder.disable_depthtest();
+            pip_builder.set_color_attachment_format(_draw_image.format);
+            _px_pipeline = pip_builder.build_pipeline(_vk_device);
+
+            vkDestroyShaderModule(_vk_device, vert_shader, nullptr);
+            vkDestroyShaderModule(_vk_device, frag_shader, nullptr);
+
+            int w_width, w_height;
+            SDL_GetWindowSize(window, &w_width, &w_height);
+
+            VkExtent3D px_out_extent = {};
+            px_out_extent.width = static_cast<uint32_t>(w_width);
+            px_out_extent.height = static_cast<uint32_t>(w_height);
+            px_out_extent.depth = 1;
+
+            _px_out_image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+            _px_out_image.extent = px_out_extent;
+            _px_out_image.mipmaps = 1;
+
+            VkImageUsageFlags _px_out_image_usages{};
+            _px_out_image_usages |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+            _px_out_image_usages |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            _px_out_image_usages |= VK_IMAGE_USAGE_STORAGE_BIT;
+            _px_out_image_usages |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+            _px_out_image_usages |= VK_IMAGE_USAGE_SAMPLED_BIT;
+
+            VkImageCreateInfo rimg_info = image_create_info(_px_out_image.format, _px_out_image_usages, px_out_extent);
+
+            VmaAllocationCreateInfo rimg_allocinfo = {};
+            rimg_allocinfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+            rimg_allocinfo.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+            vmaCreateImage(_allocator, &rimg_info, &rimg_allocinfo, &_px_out_image.image, &_px_out_image.allocation, nullptr);
+            VkImageViewCreateInfo rview_info = imageview_create_info(_px_out_image.format, _px_out_image.image, _px_out_image.mipmaps, VK_IMAGE_ASPECT_COLOR_BIT);
+
+            VK_CHECK(vkCreateImageView(_vk_device, &rview_info, nullptr, &_px_out_image.image_view));
+
+            _main_deletion_queue.push_function([&]() {
+                destroy_image(_px_out_image);
+                vkDestroyPipelineLayout(_vk_device, _px_pipeline_layout, nullptr);
+                vkDestroyPipeline(_vk_device, _px_pipeline, nullptr);
+                vkDestroyDescriptorSetLayout(_vk_device, _px_descriptor_layout, nullptr);
+            });
+        }
+
+        void apply_pixelation(VkCommandBuffer cmd, AllocatedImage image) {
+            transition_image(cmd, _px_out_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+            VkClearValue clear = { .color = { {0.f, 0.f, 0.f, 1.f} } };
+            VkRenderingAttachmentInfo color_attach = attachment_info(_px_out_image.image_view, &clear, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+            VkExtent2D dst_extent = { _px_out_image.extent.width, _px_out_image.extent.height };
+
+            VkRenderingInfo render_info = {};
+            render_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+            render_info.pNext = nullptr;
+            render_info.renderArea = VkRect2D{VkOffset2D{0, 0}, dst_extent};
+            render_info.layerCount = 1;
+            render_info.colorAttachmentCount = 1;
+            render_info.pColorAttachments = &color_attach;
+            render_info.pDepthAttachment = nullptr;
+            render_info.pStencilAttachment = nullptr;
+
+            vkCmdBeginRendering(cmd, &render_info);
+
+            VkViewport viewport = {};
+            viewport.x = 0;
+            viewport.y = 0;
+            viewport.width = static_cast<float>(dst_extent.width);
+            viewport.height = static_cast<float>(dst_extent.height);
+            viewport.minDepth = 0.f;
+            viewport.maxDepth = 1.f;
+            vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+            VkRect2D scissor = {};
+            scissor.offset = {0, 0};
+            scissor.extent = dst_extent;
+            vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _px_pipeline);
+
+            VkDescriptorSet blur_set = get_current_frame()._frame_descriptors.allocate(_vk_device, _px_descriptor_layout, nullptr);
+            DescriptorWriter writer;
+            writer.write_image(0, image.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            writer.update_set(_vk_device, blur_set);
+
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _px_pipeline_layout, 0, 1, &blur_set, 0, nullptr);
+
+            PixelationPushConstants push_constants{};
+            push_constants.pixelation_size = pixelation_size;
+            vkCmdPushConstants(cmd, _px_pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(PixelationPushConstants), &push_constants);
+
+            vkCmdDraw(cmd, 3, 1, 0, 0);
+
+            vkCmdEndRendering(cmd);
+
+            transition_image(cmd, _px_out_image.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+            transition_image(cmd, _px_out_image.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            transition_image(cmd, image.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+            VkExtent2D blit_src_extent = { _px_out_image.extent.width, _px_out_image.extent.height };
+            VkExtent2D blit_dst_extent = { image.extent.width, image.extent.height };
+            copy_image_to_image(cmd, _px_out_image.image, image.image, blit_src_extent, blit_dst_extent);
+
+            transition_image(cmd, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            transition_image(cmd, _px_out_image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         }
 
         struct GaussianBlurPushConstants {
@@ -3326,11 +3480,13 @@ namespace gvk {
             _init_bloom();
             _init_tonemapping();
             _init_ssao();
+            _init_pixelation();
         }
 
         void run_pass(VkCommandBuffer cmd, AllocatedImage image, AllocatedImage dpth_image) {
             if (bloom_enabled) apply_bloom(cmd, image);
             if (vignette_enabled) apply_vignette(cmd, image);
+            if (pixelation_enabled) apply_pixelation(cmd, image);
             if (tonemapping_enabled) {
                 apply_tonemapping(cmd, image);
                 transition_image(cmd, _tonemap_out_image.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
@@ -3373,12 +3529,12 @@ namespace gvk {
         mat.descriptor_set = material_descriptor_allocator.allocate(_vk_device, _mesh_descriptor_layout);
 
         DescriptorWriter writer;
-        writer.write_image(0, mat.albedo_map.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-        writer.write_image(1, mat.normal_map.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-        writer.write_image(2, mat.roughness_map.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-        writer.write_image(3, mat.metallic_map.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-        writer.write_image(4, mat.emissive_map.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-        writer.write_image(5, mat.ao_map.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        writer.write_image(0, mat.albedo_map.image_view, _material_default_sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        writer.write_image(1, mat.normal_map.image_view, _material_default_sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        writer.write_image(2, mat.roughness_map.image_view, _material_default_sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        writer.write_image(3, mat.metallic_map.image_view, _material_default_sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        writer.write_image(4, mat.emissive_map.image_view, _material_default_sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        writer.write_image(5, mat.ao_map.image_view, _material_default_sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
         writer.update_set(_vk_device, mat.descriptor_set);
 
         return mat;
@@ -4015,6 +4171,7 @@ namespace gvk {
         sampl.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
         sampl.maxLod = VK_LOD_CLAMP_NONE;
         vkCreateSampler(_vk_device, &sampl, nullptr, &_default_sampler_linear);
+        _material_default_sampler = _default_sampler_linear;
 
         _main_deletion_queue.push_function([&](){
             vkDestroySampler(_vk_device, _default_sampler_linear, nullptr);
@@ -4429,7 +4586,7 @@ namespace gvk {
         DescriptorWriter writer;
         writer.write_image(0, _draw_image.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
         writer.write_image(1, _skybox_draw_image.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-        writer.write_image(2, display.vk_image.image_view, (display.sampler_type = VK_FILTER_LINEAR) ? _default_sampler_linear : _default_sampler_nearest, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+        writer.write_image(2, display.vk_image.image_view, (display.sampler_type == VK_FILTER_LINEAR) ? _default_sampler_linear : _default_sampler_nearest, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
         writer.update_set(_vk_device, composite_set);
 
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _composite_pipeline_layout, 0, 1, &composite_set, 0, nullptr);
