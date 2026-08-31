@@ -2162,6 +2162,7 @@ namespace gvk {
         // bloom
         AllocatedImage _bloom_filter_image;
         AllocatedImage _bloom_comp_image;
+        VkSampler _bloom_sampler;
         VkPipeline _bloom_pipeline;
         VkPipelineLayout _bloom_pipeline_layout;
         VkDescriptorSetLayout _bloom_descriptor_layout;
@@ -2635,7 +2636,7 @@ namespace gvk {
 
                 VkDescriptorSet blur_set = get_current_frame()._frame_descriptors.allocate(_vk_device, _gbb_descriptor_layout, nullptr);
                 DescriptorWriter writer;
-                writer.write_image(0, src.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+                writer.write_image(0, src.image_view, _bloom_sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
                 writer.update_set(_vk_device, blur_set);
 
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _gb_pipeline_layout, 0, 1, &blur_set, 0, nullptr);
@@ -2807,7 +2808,7 @@ namespace gvk {
 
                 VkDescriptorSet blur_set = get_current_frame()._frame_descriptors.allocate(_vk_device, _bb_descriptor_layout, nullptr);
                 DescriptorWriter writer;
-                writer.write_image(0, src.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+                writer.write_image(0, src.image_view, _bloom_sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
                 writer.update_set(_vk_device, blur_set);
 
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _bb_pipeline_layout, 0, 1, &blur_set, 0, nullptr);
@@ -2924,8 +2925,20 @@ namespace gvk {
 
             VK_CHECK(vkCreateImageView(_vk_device, &rview_info, nullptr, &_bloom_filter_image.image_view));
 
+            VkSamplerCreateInfo sampl = {.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
+
+            sampl.magFilter = VK_FILTER_NEAREST;
+            sampl.minFilter = VK_FILTER_NEAREST;
+            sampl.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            sampl.maxLod = VK_LOD_CLAMP_NONE;
+            sampl.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            sampl.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            sampl.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            vkCreateSampler(_vk_device, &sampl, nullptr, &_bloom_sampler);
+
             _main_deletion_queue.push_function([&]() {
                 destroy_image(_bloom_filter_image);
+                vkDestroySampler(_vk_device, _bloom_sampler, nullptr);
                 vkDestroyPipelineLayout(_vk_device, _bloom_pipeline_layout, nullptr);
                 vkDestroyPipeline(_vk_device, _bloom_pipeline, nullptr);
                 vkDestroyDescriptorSetLayout(_vk_device, _bloom_descriptor_layout, nullptr);
@@ -3032,7 +3045,7 @@ namespace gvk {
 
             VkDescriptorSet bloom_set = get_current_frame()._frame_descriptors.allocate(_vk_device, _bloom_descriptor_layout, nullptr);
             DescriptorWriter writer;
-            writer.write_image(0, image.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            writer.write_image(0, image.image_view, _bloom_sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
             writer.update_set(_vk_device, bloom_set);
 
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _bloom_pipeline_layout, 0, 1, &bloom_set, 0, nullptr);
@@ -3075,8 +3088,8 @@ namespace gvk {
 
             VkDescriptorSet bloom_comp_set = get_current_frame()._frame_descriptors.allocate(_vk_device, _bloom_comp_descriptor_layout, nullptr);
             DescriptorWriter comp_writer;
-            comp_writer.write_image(0, image.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-            comp_writer.write_image(1, _bloom_filter_image.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            comp_writer.write_image(0, image.image_view, _bloom_sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            comp_writer.write_image(1, _bloom_filter_image.image_view, _bloom_sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
             comp_writer.update_set(_vk_device, bloom_comp_set);
 
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _bloom_comp_pipeline_layout, 0, 1, &bloom_comp_set, 0, nullptr);
