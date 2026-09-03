@@ -2128,6 +2128,7 @@ namespace gvk {
         bool tonemapping_enabled = true;
         bool ao_enabled = true;
         bool pixelation_enabled = false;
+        bool fog_enabled = true;
 
         // vignette
         AllocatedImage _vn_out_image;
@@ -2143,6 +2144,15 @@ namespace gvk {
         VkPipelineLayout _px_pipeline_layout;
         VkDescriptorSetLayout _px_descriptor_layout;
         int pixelation_size = 4;
+
+        // fog
+        AllocatedImage _fg_out_image;
+        VkPipeline _fg_pipeline;
+        VkPipelineLayout _fg_pipeline_layout;
+        VkDescriptorSetLayout _fg_descriptor_layout;
+        float fog_distance = 50.f;
+        float fog_intensity = 0.7f;
+        glm::vec3 fog_color = {0.6f, 0.65f, 0.7f};
 
         // gaussian_blur
         AllocatedImage _gb_out_image;
@@ -2502,6 +2512,161 @@ namespace gvk {
 
             transition_image(cmd, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             transition_image(cmd, _px_out_image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        }
+
+        struct FogPushConstants {
+            float distance;
+            float intensity;
+            float near;
+            float far;
+            glm::vec3 color;
+        };
+
+        void _init_fog() {
+            DescriptorLayoutBuilder builder;
+            builder.add_binding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            builder.add_binding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            _fg_descriptor_layout = builder.build(_vk_device, VK_SHADER_STAGE_FRAGMENT_BIT);
+
+            VkPushConstantRange fog_push_range{};
+            fog_push_range.offset = 0;
+            fog_push_range.size = sizeof(FogPushConstants);
+            fog_push_range.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+            VkPipelineLayoutCreateInfo layout_info = pipeline_layout_create_info();
+            layout_info.setLayoutCount = 1;
+            layout_info.pSetLayouts = &_fg_descriptor_layout;
+            layout_info.pushConstantRangeCount = 1;
+            layout_info.pPushConstantRanges = &fog_push_range;
+            vkCreatePipelineLayout(_vk_device, &layout_info, nullptr, &_fg_pipeline_layout);
+
+            VkShaderModule vert_shader, frag_shader;
+            if (!load_shader_module(gvk_shader("fullscreen_triangle.vert.spv").c_str(), _vk_device, &vert_shader)) {
+                cout << "error when loading fog vert (aka fullscreen triangle) shader" << endl;
+            }
+            if (!load_shader_module(gvk_shader("fog.frag.spv").c_str(), _vk_device, &frag_shader)) {
+                cout << "error when loading fog frag shader" << endl;
+            }
+
+            PipelineBuilder pip_builder;
+            pip_builder._pipeline_layout = _fg_pipeline_layout;
+            pip_builder.set_shaders(vert_shader, frag_shader);
+            pip_builder.set_input_topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+            pip_builder.set_polygon_mode(VK_POLYGON_MODE_FILL);
+            pip_builder.set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE);
+            pip_builder.set_multisampling_none();
+            pip_builder.disable_blending();
+            pip_builder.disable_depthtest();
+            pip_builder.set_color_attachment_format(_draw_image.format);
+            _fg_pipeline = pip_builder.build_pipeline(_vk_device);
+
+            vkDestroyShaderModule(_vk_device, vert_shader, nullptr);
+            vkDestroyShaderModule(_vk_device, frag_shader, nullptr);
+
+            int w_width, w_height;
+            SDL_GetWindowSize(window, &w_width, &w_height);
+
+            VkExtent3D fg_out_extent = {};
+            fg_out_extent.width = static_cast<uint32_t>(w_width);
+            fg_out_extent.height = static_cast<uint32_t>(w_height);
+            fg_out_extent.depth = 1;
+
+            _fg_out_image.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+            _fg_out_image.extent = fg_out_extent;
+            _fg_out_image.mipmaps = 1;
+
+            VkImageUsageFlags _fg_out_image_usages{};
+            _fg_out_image_usages |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+            _fg_out_image_usages |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+            _fg_out_image_usages |= VK_IMAGE_USAGE_STORAGE_BIT;
+            _fg_out_image_usages |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+            _fg_out_image_usages |= VK_IMAGE_USAGE_SAMPLED_BIT;
+
+            VkImageCreateInfo rimg_info = image_create_info(_fg_out_image.format, _fg_out_image_usages, fg_out_extent);
+
+            VmaAllocationCreateInfo rimg_allocinfo = {};
+            rimg_allocinfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
+            rimg_allocinfo.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+            vmaCreateImage(_allocator, &rimg_info, &rimg_allocinfo, &_fg_out_image.image, &_fg_out_image.allocation, nullptr);
+            VkImageViewCreateInfo rview_info = imageview_create_info(_fg_out_image.format, _fg_out_image.image, _fg_out_image.mipmaps, VK_IMAGE_ASPECT_COLOR_BIT);
+
+            VK_CHECK(vkCreateImageView(_vk_device, &rview_info, nullptr, &_fg_out_image.image_view));
+
+            _main_deletion_queue.push_function([&]() {
+                destroy_image(_fg_out_image);
+                vkDestroyPipelineLayout(_vk_device, _fg_pipeline_layout, nullptr);
+                vkDestroyPipeline(_vk_device, _fg_pipeline, nullptr);
+                vkDestroyDescriptorSetLayout(_vk_device, _fg_descriptor_layout, nullptr);
+            });
+        }
+
+        void apply_fog(VkCommandBuffer cmd, AllocatedImage image, AllocatedImage depth_image) {
+            transition_image(cmd, _fg_out_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+            VkClearValue clear = { .color = { {0.f, 0.f, 0.f, 1.f} } };
+            VkRenderingAttachmentInfo color_attach = attachment_info(_fg_out_image.image_view, &clear, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+            VkExtent2D dst_extent = { _fg_out_image.extent.width, _fg_out_image.extent.height };
+
+            VkRenderingInfo render_info = {};
+            render_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO;
+            render_info.pNext = nullptr;
+            render_info.renderArea = VkRect2D{VkOffset2D{0, 0}, dst_extent};
+            render_info.layerCount = 1;
+            render_info.colorAttachmentCount = 1;
+            render_info.pColorAttachments = &color_attach;
+            render_info.pDepthAttachment = nullptr;
+            render_info.pStencilAttachment = nullptr;
+
+            vkCmdBeginRendering(cmd, &render_info);
+
+            VkViewport viewport = {};
+            viewport.x = 0;
+            viewport.y = 0;
+            viewport.width = static_cast<float>(dst_extent.width);
+            viewport.height = static_cast<float>(dst_extent.height);
+            viewport.minDepth = 0.f;
+            viewport.maxDepth = 1.f;
+            vkCmdSetViewport(cmd, 0, 1, &viewport);
+
+            VkRect2D scissor = {};
+            scissor.offset = {0, 0};
+            scissor.extent = dst_extent;
+            vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _fg_pipeline);
+
+            VkDescriptorSet blur_set = get_current_frame()._frame_descriptors.allocate(_vk_device, _fg_descriptor_layout, nullptr);
+            DescriptorWriter writer;
+            writer.write_image(0, image.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            writer.write_image(1, depth_image.image_view, _default_sampler_linear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            writer.update_set(_vk_device, blur_set);
+
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _fg_pipeline_layout, 0, 1, &blur_set, 0, nullptr);
+
+            FogPushConstants push_constants{};
+            push_constants.distance = fog_distance;
+            push_constants.intensity = fog_intensity;
+            push_constants.color = fog_color;
+            push_constants.near = proj_near;
+            push_constants.far = proj_far;
+            vkCmdPushConstants(cmd, _fg_pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(FogPushConstants), &push_constants);
+
+            vkCmdDraw(cmd, 3, 1, 0, 0);
+
+            vkCmdEndRendering(cmd);
+
+            transition_image(cmd, _fg_out_image.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+            transition_image(cmd, _fg_out_image.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+            transition_image(cmd, image.image, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+            VkExtent2D blit_src_extent = { _fg_out_image.extent.width, _fg_out_image.extent.height };
+            VkExtent2D blit_dst_extent = { image.extent.width, image.extent.height };
+            copy_image_to_image(cmd, _fg_out_image.image, image.image, blit_src_extent, blit_dst_extent);
+
+            transition_image(cmd, image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            transition_image(cmd, _fg_out_image.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         }
 
         struct GaussianBlurPushConstants {
@@ -3496,6 +3661,7 @@ namespace gvk {
             _init_tonemapping();
             _init_ssao();
             _init_pixelation();
+            _init_fog();
         }
 
         void run_pass(VkCommandBuffer cmd, AllocatedImage image, AllocatedImage dpth_image) {
@@ -6107,7 +6273,8 @@ namespace gvk {
         transition_image(cmd, _skybox_draw_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         transition_image(cmd, _depth_image_msaa.image, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
-        main_post_processing_stack.apply_ssao(cmd, _draw_image, _depth_image_msaa);
+        if (main_post_processing_stack.ao_enabled) main_post_processing_stack.apply_ssao(cmd, _draw_image, _depth_image_msaa);
+        if (main_post_processing_stack.fog_enabled) main_post_processing_stack.apply_fog(cmd, _draw_image, _depth_image_msaa);
 
         transition_image(cmd, _composite_image.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
