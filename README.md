@@ -8,7 +8,7 @@ gvk::draw_mesh(mesh, material, position, scale, rotation);
 ```
 and the mesh is where you want it, how you want it.
 
-But don't mistake it, this is not a game engine, this is just a renderer, something you can build an engine on. I made this tool so my later projects have a graphical backbone to build on, but every game needs a different engine.
+This is neither a game engine or a vulkan abstraction. It does not have built in features like spatial audio or physics like a normal engine, but it makes rendering something you don't have to worry about at all. All you need to do is load an object and let it be drawn to the screen. I built it with little tooling because I realized that I like developing the tooling individually for each one of my games, as it makes the actual development so much easier that every feature is intended to be there.
 ## Features:
 - Full 3D rendering capabilites
 - ImGui
@@ -50,8 +50,6 @@ int main() {
     relative_gvk_path = "../include/GVK-Engine"; // this is the hard coded value in the renderer, if your path is different, edit this value
     gvk::init();
 
-    gvk::clear_color = {0.05f, 0.05f, 0.05f, 1.f};
-
     bool running = true;
     while (running) {
         SDL_Event e;
@@ -76,9 +74,10 @@ int main() {
     return 0;
 }
 ```
+from here you can load any mesh with one line and render any mesh with one line.
 ## AI disclosure
 This project was created so I could learn Vulkan, and if I copied everything from AI that would have been to effective. My goal was to use as little AI as I could, while still leaving out the headaches of development. Here's what I used AI for:
-1. Many of the shaders were written by AI, but that's because I haven't learned any of the maths I need to know to write any of these shader. When a shader wasn't too math heavy I wrote it myself, but there weren't too many of those.
+1. The math heavy parts of some shaders were written by AI, as I have not reached the proper levels of academic studies to know what to do. I haven't gotten to the point where I was taught how to use the sine function, so writing physically based rendering was a major challenge that I couldn't get through alone.
 2. The GLTF loading isn't hard, it's just a headache to work with it. GLTF is a horrible format for developers, but it's the best I knew, so I rather had AI write the GLTF loading functions. I'm still glad I did that, I would have learned nothing from writing those.
 ## External projects used:
 - [Vulkan](https://vulkan.lunarg.com/)
