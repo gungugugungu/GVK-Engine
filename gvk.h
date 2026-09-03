@@ -794,6 +794,7 @@ namespace gvk {
         float scalar_tint;
         float roughness;
         float metallic;
+        glm::vec3 emissive_factor;
     };
 
     struct GeoSurface {
@@ -1297,6 +1298,7 @@ namespace gvk {
         float scalar_tint;
         float roughness;
         float metallic;
+        glm::vec3 emissive_factor;
 
         VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
     };
@@ -3527,7 +3529,7 @@ namespace gvk {
 
     PostProcessingStack main_post_processing_stack;
 
-    Material create_material(AllocatedImage albedo = {}, AllocatedImage normal = {}, AllocatedImage roughness = {}, AllocatedImage metallic = {}, AllocatedImage emissive = {}, AllocatedImage ao = {}, float scalar_tint = 1.f, float roughness_factor = 1.f, float metallic_factor = 0.f) {
+    Material create_material(AllocatedImage albedo = {}, AllocatedImage normal = {}, AllocatedImage roughness = {}, AllocatedImage metallic = {}, AllocatedImage emissive = {}, AllocatedImage ao = {}, float scalar_tint = 1.f, float roughness_factor = 1.f, float metallic_factor = 0.f, glm::vec3 emissive_factor = glm::vec3(1.0f)) {
         Material mat{};
         mat.albedo_map = (albedo.image != VK_NULL_HANDLE) ? albedo : _white_image;
         mat.normal_map = (normal.image != VK_NULL_HANDLE) ? normal : _normal_image;
@@ -3538,6 +3540,7 @@ namespace gvk {
         mat.scalar_tint = scalar_tint;
         mat.roughness = roughness_factor;
         mat.metallic = metallic_factor;
+        mat.emissive_factor = emissive_factor;
 
         mat.descriptor_set = material_descriptor_allocator.allocate(_vk_device, _mesh_descriptor_layout);
 
@@ -4491,6 +4494,11 @@ namespace gvk {
             writer.write_buffer(1, point_light_buf.buffer, point_buf_size, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
             writer.write_buffer(2, spot_light_buf.buffer, spot_buf_size, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
             writer.write_buffer(3, counts_buf.buffer, sizeof(GPULightCounts), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+
+            if (skybox.cubemap.image.image != VK_NULL_HANDLE) {
+                writer.write_image(4, skybox.cubemap.image_view, skybox.cubemap.sampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+            }
+
             writer.update_set(_vk_device, light_set);
         }
 
@@ -4533,6 +4541,7 @@ namespace gvk {
                 material_push_constants.roughness = m.material.roughness;
                 material_push_constants.metallic = m.material.metallic;
                 material_push_constants.scalar_tint = m.material.scalar_tint;
+                material_push_constants.emissive_factor = m.material.emissive_factor;
 
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _mesh_pipeline_layout, 0, 1, &m.material.descriptor_set, 0, nullptr);
 
@@ -4559,6 +4568,7 @@ namespace gvk {
             material_push_constants.roughness = m.material.roughness;
             material_push_constants.metallic = m.material.metallic;
             material_push_constants.scalar_tint = m.material.scalar_tint;
+            material_push_constants.emissive_factor = m.material.emissive_factor;
 
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _skinned_mesh_pipeline_layout, 0, 1, &m.material.descriptor_set, 0, nullptr);
 
@@ -4656,12 +4666,14 @@ namespace gvk {
             builder.add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // point
             builder.add_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // spot
             builder.add_binding(3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+            builder.add_binding(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // skybox
             _light_descriptor_layout = builder.build(_vk_device, VK_SHADER_STAGE_FRAGMENT_BIT);
         }
 
         vector<DescriptorAllocatorGrowable::PoolSizeRatio> light_pool_sizes = {
             {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2},
-            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2}
+            {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2},
+            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1}
         };
         light_descriptor_allocator.init(_vk_device, 64, light_pool_sizes);
 
@@ -4977,16 +4989,23 @@ namespace gvk {
             float scalar_tint = 1.f;
             float roughness = 1.f;
             float metallic = 0.f;
+            glm::vec3 emissive_factor(0.0f);
             scalar_tint = (float)mat.pbr_metallic_roughness.base_color_factor[0];
             roughness = (float)mat.pbr_metallic_roughness.roughness_factor;
             metallic = (float)mat.pbr_metallic_roughness.metallic_factor;
+            emissive_factor = glm::vec3(
+                (float)mat.emissive_factor[0],
+                (float)mat.emissive_factor[1],
+                (float)mat.emissive_factor[2]
+            );
             AllocatedImage albedo = load_texture(mat.pbr_metallic_roughness.base_color_texture.index, _white_image);
-            AllocatedImage normal = load_texture(mat.normal_texture.index, _normal_image);
-            AllocatedImage roughness_map = load_texture(mat.pbr_metallic_roughness.metallic_roughness_texture.index, _white_image);
-            AllocatedImage metallic_map = load_texture(mat.pbr_metallic_roughness.metallic_roughness_texture.index, _black_image);
-            AllocatedImage emissive = load_texture(mat.emissive_texture.index, _black_image);
-            AllocatedImage ao = load_texture(mat.occlusion_texture.index, _white_image);
+            AllocatedImage normal = load_texture(mat.normal_texture.index, _normal_image, VK_FORMAT_R8G8B8A8_UNORM);
+            AllocatedImage roughness_map = load_texture(mat.pbr_metallic_roughness.metallic_roughness_texture.index, _white_image, VK_FORMAT_R8G8B8A8_UNORM);
+            AllocatedImage metallic_map = load_texture(mat.pbr_metallic_roughness.metallic_roughness_texture.index, _white_image, VK_FORMAT_R8G8B8A8_UNORM);
+            AllocatedImage emissive = load_texture(mat.emissive_texture.index, _white_image);
+            AllocatedImage ao = load_texture(mat.occlusion_texture.index, _white_image, VK_FORMAT_R8G8B8A8_UNORM);
             materials[mi] = create_material(albedo, normal, roughness_map, metallic_map, emissive, ao, scalar_tint, roughness, metallic);
+            materials[mi].emissive_factor = emissive_factor;
         }
         vector<GLTFMeshReturns> meshes;
         for (uint32_t mi = 0; mi < model.meshes_count; mi++) {
@@ -5244,16 +5263,23 @@ namespace gvk {
             float scalar_tint = 1.f;
             float roughness = 1.f;
             float metallic = 0.f;
+            glm::vec3 emissive_factor(0.0f);
             scalar_tint = (float)mat.pbr_metallic_roughness.base_color_factor[0];
             roughness = (float)mat.pbr_metallic_roughness.roughness_factor;
             metallic = (float)mat.pbr_metallic_roughness.metallic_factor;
+            emissive_factor = glm::vec3(
+                (float)mat.emissive_factor[0],
+                (float)mat.emissive_factor[1],
+                (float)mat.emissive_factor[2]
+            );
             AllocatedImage albedo = load_texture(mat.pbr_metallic_roughness.base_color_texture.index, _white_image);
-            AllocatedImage normal = load_texture(mat.normal_texture.index, _normal_image);
-            AllocatedImage roughness_map = load_texture(mat.pbr_metallic_roughness.metallic_roughness_texture.index, _white_image);
-            AllocatedImage metallic_map = load_texture(mat.pbr_metallic_roughness.metallic_roughness_texture.index, _black_image);
-            AllocatedImage emissive = load_texture(mat.emissive_texture.index, _black_image);
-            AllocatedImage ao = load_texture(mat.occlusion_texture.index, _white_image);
+            AllocatedImage normal = load_texture(mat.normal_texture.index, _normal_image, VK_FORMAT_R8G8B8A8_UNORM);
+            AllocatedImage roughness_map = load_texture(mat.pbr_metallic_roughness.metallic_roughness_texture.index, _white_image, VK_FORMAT_R8G8B8A8_UNORM);
+            AllocatedImage metallic_map = load_texture(mat.pbr_metallic_roughness.metallic_roughness_texture.index, _white_image, VK_FORMAT_R8G8B8A8_UNORM);
+            AllocatedImage emissive = load_texture(mat.emissive_texture.index, _white_image);
+            AllocatedImage ao = load_texture(mat.occlusion_texture.index, _white_image, VK_FORMAT_R8G8B8A8_UNORM);
             materials[mi] = create_material(albedo, normal, roughness_map, metallic_map, emissive, ao, scalar_tint, roughness, metallic);
+            materials[mi].emissive_factor = emissive_factor;
         }
         for (uint32_t mi = 0; mi < model.meshes_count; mi++) {
             const tg3_mesh& mesh = model.meshes[mi];
@@ -5696,16 +5722,23 @@ namespace gvk {
             float scalar_tint = 1.f;
             float roughness = 1.f;
             float metallic = 0.f;
+            glm::vec3 emissive_factor(0.0f);
             scalar_tint = (float)mat.pbr_metallic_roughness.base_color_factor[0];
             roughness = (float)mat.pbr_metallic_roughness.roughness_factor;
             metallic = (float)mat.pbr_metallic_roughness.metallic_factor;
+            emissive_factor = glm::vec3(
+                (float)mat.emissive_factor[0],
+                (float)mat.emissive_factor[1],
+                (float)mat.emissive_factor[2]
+            );
             AllocatedImage albedo = load_texture(mat.pbr_metallic_roughness.base_color_texture.index, _white_image);
-            AllocatedImage normal = load_texture(mat.normal_texture.index, _normal_image);
-            AllocatedImage roughness_map = load_texture(mat.pbr_metallic_roughness.metallic_roughness_texture.index, _white_image);
-            AllocatedImage metallic_map = load_texture(mat.pbr_metallic_roughness.metallic_roughness_texture.index, _black_image);
-            AllocatedImage emissive = load_texture(mat.emissive_texture.index, _black_image);
-            AllocatedImage ao = load_texture(mat.occlusion_texture.index, _white_image);
+            AllocatedImage normal = load_texture(mat.normal_texture.index, _normal_image, VK_FORMAT_R8G8B8A8_UNORM);
+            AllocatedImage roughness_map = load_texture(mat.pbr_metallic_roughness.metallic_roughness_texture.index, _white_image, VK_FORMAT_R8G8B8A8_UNORM);
+            AllocatedImage metallic_map = load_texture(mat.pbr_metallic_roughness.metallic_roughness_texture.index, _white_image, VK_FORMAT_R8G8B8A8_UNORM);
+            AllocatedImage emissive = load_texture(mat.emissive_texture.index, _white_image);
+            AllocatedImage ao = load_texture(mat.occlusion_texture.index, _white_image, VK_FORMAT_R8G8B8A8_UNORM);
             result.materials[mi] = create_material(albedo, normal, roughness_map, metallic_map, emissive, ao, scalar_tint, roughness, metallic);
+            result.materials[mi].emissive_factor = emissive_factor;
         }
         vector<uint32_t> indices;
         vector<SkinnedVertex> vertices;

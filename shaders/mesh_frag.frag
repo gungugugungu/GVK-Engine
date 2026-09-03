@@ -55,14 +55,49 @@ layout(set = 1, binding = 3, std140) uniform LightCountsBuffer {
     uint spot_light_count;
 } lightCounts;
 
+layout(set = 1, binding = 4) uniform samplerCube skybox_map;
+
 layout(push_constant, std430) uniform constants
 {
     layout(offset = 136) float scalar_tint;
     float roughness;
     float metallic;
+    float emissive_r;
+    float emissive_g;
+    float emissive_b;
 } MaterialPushConstants;
 
 const float PI = 3.14159265359;
+
+vec3 sampleEnvironment(vec3 R, float roughness)
+{
+    float blur = roughness * roughness;
+    if (blur < 0.001) return texture(skybox_map, R).rgb;
+
+    vec3 up = abs(R.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3 T = normalize(cross(up, R));
+    vec3 B = cross(R, T);
+
+    const int SAMPLE_COUNT = 17;
+    const float GOLDEN_ANGLE = 2.39996323;
+
+    vec3 result = texture(skybox_map, R).rgb;
+    float totalWeight = 1.0;
+
+    for (int i = 0; i < SAMPLE_COUNT - 1; ++i)
+    {
+        float fi = float(i + 1);
+        float radius = blur * sqrt(fi / float(SAMPLE_COUNT - 1));
+        float angle = fi * GOLDEN_ANGLE;
+        vec3 offset = T * (cos(angle) * radius) + B * (sin(angle) * radius);
+        vec3 sampleDir = normalize(R + offset);
+        float weight = 1.0 - fi / float(SAMPLE_COUNT);
+        result += texture(skybox_map, sampleDir).rgb * weight;
+        totalWeight += weight;
+    }
+
+    return result / totalWeight;
+}
 
 float D_GGX(float NdotH, float roughness)
 {
@@ -119,10 +154,14 @@ void main()
     vec3 albedo = albedoSample.rgb * MaterialPushConstants.scalar_tint;
     float alpha = albedoSample.a;
 
-    float roughnessTex = texture(roughness_map, uv).r;
-    float metallicTex = texture(metallic_map, uv).r;
+    float roughnessTex = texture(roughness_map, uv).g;
+    float metallicTex = texture(metallic_map, uv).b;
     float ao = texture(ao_map, uv).r;
-    vec3 emissive = texture(emissive_map, uv).rgb;
+    vec3 emissive = texture(emissive_map, uv).rgb * vec3(
+            MaterialPushConstants.emissive_r,
+            MaterialPushConstants.emissive_g,
+            MaterialPushConstants.emissive_b
+    );
 
     float roughness = clamp(roughnessTex * MaterialPushConstants.roughness, 0.04, 1.0);
     float metallic = clamp(metallicTex * MaterialPushConstants.metallic, 0.0, 1.0);
@@ -143,6 +182,12 @@ void main()
     vec3 F0 = mix(vec3(0.04), albedo, metallic);
 
     vec3 ambient = albedo * ao * directionalLight.light.ambient_color * directionalLight.light.ambient_intensity;
+
+    vec3 R = reflect(-V, N);
+    vec3 prefilteredColor = sampleEnvironment(R, roughness);
+    vec3 F_env = F_Schlick(max(dot(N, V), 0.0), F0);
+    float reflectionStrength = pow(1.0 - roughness, 4.0);
+    vec3 reflection = prefilteredColor * F_env * ao * reflectionStrength;
 
     vec3 Lo = vec3(0.0);
 
@@ -213,7 +258,7 @@ void main()
         }
     }
 
-    vec3 color = ambient + Lo + emissive;
+    vec3 color = ambient + Lo + emissive + reflection;
     color = color / (color + vec3(1.0));
     frag_color = vec4(color, alpha);
 }
