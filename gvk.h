@@ -2150,7 +2150,7 @@ namespace gvk {
         VkPipeline _fg_pipeline;
         VkPipelineLayout _fg_pipeline_layout;
         VkDescriptorSetLayout _fg_descriptor_layout;
-        float fog_distance = 50.f;
+        float fog_distance = 250.f;
         float fog_intensity = 0.7f;
         glm::vec3 fog_color = {0.6f, 0.65f, 0.7f};
 
