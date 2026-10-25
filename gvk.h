@@ -27,7 +27,7 @@
 #include "fmt/chrono.h"
 #include "include/stb/stb_image.h"
 #include "include/stb/stb_truetype.h"
-#include "include/stb/stb_image_resize2.h"
+#include "include/stb_image_resize/stb_image_resize2.h"
 #include "SDL3/SDL_vulkan.h"
 #include "imgui.h"
 #include "backends/imgui_impl_sdl3.h"

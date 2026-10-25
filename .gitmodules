@@ -22,3 +22,6 @@
 [submodule "include/tinygltf"]
 	path = include/tinygltf
 	url = https://github.com/syoyo/tinygltf.git
+[submodule "include/stb_image_resize"]
+	path = include/stb_image_resize
+	url = https://github.com/nothings/stb_image_resize
